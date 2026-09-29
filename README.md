@@ -2,6 +2,8 @@
 
 View a Markdown file as a rendered HTML page, in a browser that runs inside your terminal.
 
+![tmdview showing this README in a pane beside the editor](docs/screenshot.png)
+
 > [!IMPORTANT]
 > **This is a personal tool, written with AI.**
 > The code, tests and docs in this repo were written by an AI coding assistant ([Claude Code](https://claude.com/claude-code)).
