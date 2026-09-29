@@ -57,7 +57,7 @@ Math is recognized but shown as plain text, not typeset.
 ## Plugins
 
 A plugin adds JavaScript that draws or colors certain code blocks.
-You install it once, so the install from git stays small.
+Plugins aren't part of the tmdview install, which keeps it small. You install each one once.
 After that, tmdview uses it on every page that needs it, and it works offline.
 
 ```sh
@@ -75,16 +75,16 @@ tmdview plugins remove highlight
 
 ![The highlight plugin coloring TypeScript, Kotlin and Dockerfile blocks beside the Markdown source](docs/screenshot-highlight.png)
 
-**Built-in plugins** are pinned in tmdview with a SHA-256 checksum, and `install` rejects a download that doesn't match.
+tmdview pins each built-in plugin with a SHA-256 checksum, and `install` rejects a download that doesn't match.
 
-**Git plugins** come from any git repository: a URL, GitHub shorthand (`owner/repo`) or a local path.
+A git plugin can come from any git repository: a URL, GitHub shorthand (`owner/repo`) or a local path.
 tmdview runs your own `git`, so private repositories work with your usual SSH keys or credentials.
 Add `--ref <branch, tag or commit>` to pin a version.
 Before installing or updating, tmdview shows what the plugin takes over and asks you to confirm, because it runs the plugin's JavaScript in your pages. Pass `--yes` to skip the question.
 
 Plugins go in your data folder, for example `~/Library/Application Support/tmdview/plugins/` on macOS.
-To write one, see [docs/PLUGINS.md](docs/PLUGINS.md).
 Mermaid is MIT-licensed.
+To write a plugin, see [docs/PLUGINS.md](docs/PLUGINS.md).
 
 ## How it works
 

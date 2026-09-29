@@ -62,8 +62,8 @@ Each built-in plugin has a `Spec` in `builtin.rs`: a name, a pinned version, a U
 It writes a temp file and renames it, so a failed install never leaves a partial library.
 A download over 32 MB, or one with the wrong checksum, is rejected.
 
-The version is part of the path, so when tmdview pins a new version, the old file is simply ignored.
-`plugins list` then shows the plugin as not installed until you install it again.
+The version is part of the path, so when tmdview pins a new version, tmdview ignores the old file.
+`plugins list` shows the plugin as not installed until you install it again.
 `plugins remove` deletes the plugin's folder, with every version in it.
 
 To bump a plugin, change `version`, `url` and `sha256` together.
@@ -134,8 +134,7 @@ Before the main pass, tmdview reads all of these custom IDs, so a generated ID n
 
 ### Syntax colors and themes
 
-syntect writes CSS classes (prefixed `hl-`) into the HTML, not inline colors.
-That makes it possible to switch the code's colors with the page theme.
+syntect writes CSS classes (prefixed `hl-`) into the HTML, not inline colors, so the code's colors can change with the page theme.
 The page has 2 sets of code colors:
 
 - `InspiredGitHub` for light mode
@@ -219,7 +218,7 @@ tmdview checks whether the tab still exists, and if it does, it tries again on t
 
 ### Where messages go
 
-In the default mode the browser draws over your whole pane, so any message printed there would mess up the screen.
+In the default mode the browser draws over your whole pane, so a message printed there would garble the screen.
 While the browser process runs, messages go to `<temp>/tmdview/<name>-<hash>.log`.
 When the browser exits, messages go back to stderr.
 
