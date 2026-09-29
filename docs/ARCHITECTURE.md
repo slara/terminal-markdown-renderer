@@ -1,7 +1,7 @@
 # Architecture
 
 This page explains how tmdview works, for anyone reading or changing the code.
-The whole program is about 600 lines of Rust in four files.
+The whole program is about 900 lines of Rust in five files.
 
 ## What happens when you run it
 
@@ -32,8 +32,54 @@ flowchart LR
 | `src/render.rs` | Markdown to a full HTML page, syntax colors, heading IDs, file URLs |
 | `src/template.html` | Page layout, CSS for both themes, the script that keeps your scroll position |
 | `src/browser.rs` | Runs the `terminal-browser` command and reads its JSON output |
+| `src/plugins.rs` | Plugins: pinned downloads, install and remove, which code blocks each one claims, its HTML and its scripts |
 
 `template.html` is built into the binary with `include_str!`, so tmdview is a single file with nothing to install next to it.
+Plugins are the one exception, and they're optional.
+
+## Plugins
+
+A plugin is a client-side library that tmdview downloads once and inlines into pages.
+Libraries aren't kept in the repo, so `cargo install --git` doesn't have to download them.
+
+### Installing
+
+Each plugin has a `Spec` in `plugins.rs`: a name, a pinned version, a URL and a SHA-256 checksum.
+`tmdview plugins install <name>` downloads the URL with `ureq`, checks the checksum, and saves the file to
+`<data folder>/tmdview/plugins/<name>/<version>/`, where the data folder comes from the `dirs` crate.
+It writes a temp file and renames it, so a failed install never leaves a partial library.
+A download over 32 MB, or one with the wrong checksum, is rejected.
+
+The version is part of the path, so when tmdview pins a new version, the old file is simply ignored.
+`plugins list` then shows the plugin as not installed until you install it again.
+`plugins remove` deletes the plugin's folder, with every version in it.
+
+To bump a plugin, change `version`, `url` and `sha256` together.
+Get the checksum with `curl -sL <url> | shasum -a 256`.
+
+### Rendering
+
+At start-up, tmdview reads every installed plugin into memory, unless `--no-plugins` is set.
+Each plugin is a variant of the `Plugin` enum, with three methods:
+
+| Method | Job |
+|---|---|
+| `claims(lang)` | Whether it takes over fenced code blocks with this language tag |
+| `block(src)` | The HTML for a claimed block, used instead of syntect's `<pre>` |
+| `scripts(library)` | The `<script>` tags added before `</body>`, once per page |
+
+The renderer only adds a plugin's scripts when the page has at least one block the plugin claimed.
+Pages without diagrams stay small even with Mermaid installed.
+
+The scripts go in at the `{{plugins}}` marker in `template.html`.
+tmdview splits the template at that marker before filling in the other placeholders.
+That way it never searches a 5.5 MB library, or the page body, for `{{...}}`.
+
+Mermaid draws after the page loads, and that changes the page height.
+Its start-up script stores the drawing promise in `window.tmdviewReady`.
+The scroll script waits for that promise before it restores your position.
+
+To add a plugin, add a variant and its `Spec`, then fill in the three methods.
 
 ## Rendering
 
@@ -155,22 +201,27 @@ It restores on the `load` event, after images have loaded, so the page is tall e
 | Poll the file | No extra dependency, works with every editor's save method | Up to 250 ms before a change shows |
 | Open a `file://` page, no local web server | Nothing to start, stop or secure | The page can't push its own updates, so tmdview has to reload it |
 | CSS classes for code colors | One page works in both themes | Slightly bigger HTML, since both themes' CSS is included |
-| One self-contained HTML file | Works offline, easy to save with `-o` | No KaTeX or Mermaid rendering, since those need JavaScript libraries |
+| One self-contained HTML file | Works offline, easy to save with `-o` | Plugins inline their whole library, so a Mermaid page is about 5.5 MB |
+| Plugins are downloaded, not in the repo | A git install stays small, and you only get what you use | One network step per plugin, and `ureq` adds about 2 MB to the binary |
+| Installed means on | Nothing to enable per run, since scripts only go into pages that need them | Use `--no-plugins` to turn them off for one run |
 
 ## Known limits
 
 - Math is shown as plain text.
-- Mermaid blocks are shown as code, not as diagrams.
+- Mermaid blocks are shown as code unless the `mermaid` plugin is installed.
+- A Mermaid page doesn't redraw if the system theme changes while it's open. It picks up the change on the next reload.
 - The default mode (browser takes over the pane) has only been tested by hand.
 - Only macOS has been tried.
 
 ## Tests
 
-`cargo test` runs 7 unit tests. They cover:
+`cargo test` runs 10 unit tests. They cover:
 
 - heading IDs, including duplicates and custom `{#id}`s
 - syntax colors, and plain output for unknown languages
 - tables, task lists and strikethrough
 - percent-encoding and decoding of file paths
+- the Mermaid plugin: off when not loaded, claims blocks when loaded, adds its script once, and skips pages without diagrams
 
+Downloading plugins has no automated tests, since it needs the network.
 Nothing that runs `terminal-browser` has automated tests, because it needs a real terminal and a running browser.

@@ -9,16 +9,19 @@ use syntect::html::{css_for_theme_with_class_style, ClassStyle, ClassedHTMLGener
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
+use crate::plugins::{Loaded, Plugin};
+
 const TEMPLATE: &str = include_str!("template.html");
 const CLASS_STYLE: ClassStyle = ClassStyle::SpacedPrefixed { prefix: "hl-" };
 
 pub struct Renderer {
     syntaxes: SyntaxSet,
     highlight_css: String,
+    plugins: Vec<Loaded>,
 }
 
 impl Renderer {
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new(plugins: Vec<Loaded>) -> anyhow::Result<Self> {
         let themes = ThemeSet::load_defaults();
         let light = css_for_theme_with_class_style(&themes.themes["InspiredGitHub"], CLASS_STYLE)?;
         let dark = css_for_theme_with_class_style(&themes.themes["base16-ocean.dark"], CLASS_STYLE)?;
@@ -27,27 +30,35 @@ impl Renderer {
             scope_css(&dark, ":root:not([data-theme=\"light\"])"),
             scope_css(&dark, ":root[data-theme=\"dark\"]"),
         );
-        Ok(Self { syntaxes: SyntaxSet::load_defaults_newlines(), highlight_css })
+        Ok(Self { syntaxes: SyntaxSet::load_defaults_newlines(), highlight_css, plugins })
     }
 
     /// Render `markdown` into a full HTML page. `base_dir` is used so relative
     /// links and images resolve against the markdown file's directory.
     pub fn render(&self, markdown: &str, title: &str, base_dir: &Path, theme: &str) -> String {
-        let body = self.render_body(markdown);
+        let (body, used) = self.render_body(markdown);
         let base = format!("{}/", file_url(base_dir));
         let theme_attr = match theme {
             "light" | "dark" => format!(" data-theme=\"{theme}\""),
             _ => String::new(),
         };
-        TEMPLATE
+        // Split first, so neither the body nor a plugin's script is searched for placeholders.
+        let (head, tail) = TEMPLATE.split_once("{{plugins}}").expect("template has {{plugins}}");
+        let mut page = head
             .replace("{{theme_attr}}", &theme_attr)
             .replace("{{title}}", &escape(title))
             .replace("{{base}}", &escape(&base))
             .replace("{{highlight_css}}", &self.highlight_css)
-            .replace("{{body}}", &body)
+            .replace("{{body}}", &body);
+        for loaded in self.plugins.iter().filter(|l| used.contains(&l.plugin)) {
+            page.push_str(&loaded.plugin.scripts(&loaded.library));
+        }
+        page.push_str(tail);
+        page
     }
 
-    fn render_body(&self, markdown: &str) -> String {
+    /// The page body, plus the plugins that claimed at least one block in it.
+    fn render_body(&self, markdown: &str) -> (String, Vec<Plugin>) {
         let options = Options::ENABLE_TABLES
             | Options::ENABLE_FOOTNOTES
             | Options::ENABLE_STRIKETHROUGH
@@ -59,6 +70,7 @@ impl Renderer {
 
         let mut events = Vec::new();
         let mut code: Option<(String, String)> = None; // (lang, source)
+        let mut used: Vec<Plugin> = Vec::new();
         let mut heading: Option<(Tag, Vec<Event>)> = None; // (start tag, inner events)
         // Explicit `{#id}`s are reserved up front so generated slugs never collide with them.
         let mut used_ids: HashSet<String> = Parser::new_ext(markdown, options)
@@ -74,7 +86,15 @@ impl Renderer {
                 match event {
                     Event::Text(t) => src.push_str(&t),
                     Event::End(TagEnd::CodeBlock) => {
-                        let html = self.highlight(lang, src);
+                        let html = match self.plugins.iter().map(|l| l.plugin).find(|p| p.claims(lang)) {
+                            Some(plugin) => {
+                                if !used.contains(&plugin) {
+                                    used.push(plugin);
+                                }
+                                plugin.block(src)
+                            }
+                            None => self.highlight(lang, src),
+                        };
                         code = None;
                         events.push(Event::Html(html.into()));
                     }
@@ -118,7 +138,7 @@ impl Renderer {
 
         let mut out = String::with_capacity(markdown.len() * 2);
         html::push_html(&mut out, events.into_iter());
-        out
+        (out, used)
     }
 
     fn highlight(&self, lang: &str, src: &str) -> String {
@@ -216,7 +236,35 @@ mod tests {
     use super::*;
 
     fn body(md: &str) -> String {
-        Renderer::new().unwrap().render_body(md)
+        Renderer::new(Vec::new()).unwrap().render_body(md).0
+    }
+
+    #[test]
+    fn mermaid_blocks_stay_code_without_the_plugin() {
+        let html = body("```mermaid\ngraph LR; a-->b\n```\n");
+        assert!(html.contains(r#"<pre data-lang="mermaid"><code>"#), "{html}");
+    }
+
+    #[test]
+    fn mermaid_plugin_claims_blocks_and_adds_its_script_once() {
+        let renderer = Renderer::new(vec![fake_mermaid()]).unwrap();
+        let md = "```mermaid\ngraph LR; a-->b\n```\n\n```mermaid\ngraph TD; c-->d\n```\n";
+        let page = renderer.render(md, "t", Path::new("/"), "auto");
+        assert!(page.contains("<pre class=\"mermaid\">graph LR; a--&gt;b\n</pre>"), "{page}");
+        assert_eq!(page.matches("/* mermaid library */").count(), 1);
+        assert_eq!(page.matches("window.tmdviewReady = mermaid.run").count(), 1);
+        assert!(!page.contains("{{plugins}}"));
+    }
+
+    #[test]
+    fn mermaid_plugin_skips_pages_without_diagrams() {
+        let renderer = Renderer::new(vec![fake_mermaid()]).unwrap();
+        let page = renderer.render("# Hi\n", "t", Path::new("/"), "auto");
+        assert!(!page.contains("mermaid library"));
+    }
+
+    fn fake_mermaid() -> Loaded {
+        Loaded { plugin: Plugin::Mermaid, library: "/* mermaid library */".into() }
     }
 
     #[test]

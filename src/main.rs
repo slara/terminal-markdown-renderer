@@ -1,4 +1,5 @@
 mod browser;
+mod plugins;
 mod render;
 
 use std::fs;
@@ -11,16 +12,21 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result};
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 
+use plugins::Plugin;
 use render::Renderer;
 
 /// View a markdown file rendered as HTML in a browser inside the terminal.
 #[derive(Parser)]
-#[command(version)]
+#[command(version, args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
 struct Cli {
-    /// Markdown file to view.
-    file: PathBuf,
+    #[command(subcommand)]
+    command: Option<Command>,
+
+    /// Markdown file to view. For a file named `plugins`, write `./plugins`.
+    #[arg(required = true)]
+    file: Option<PathBuf>,
 
     /// Open in a new pane beside the current one instead of taking over this pane.
     #[arg(short, long, value_enum)]
@@ -45,6 +51,35 @@ struct Cli {
     /// Only render the HTML file; don't open a browser.
     #[arg(long)]
     no_open: bool,
+
+    /// Don't use installed plugins; show their code blocks as code.
+    #[arg(long)]
+    no_plugins: bool,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// List, install or remove plugins.
+    Plugins {
+        #[command(subcommand)]
+        action: PluginsAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum PluginsAction {
+    /// Show every plugin and whether it's installed.
+    List,
+    /// Download plugins into your data folder. Installed plugins are used automatically.
+    Install {
+        #[arg(required = true, value_enum)]
+        names: Vec<Plugin>,
+    },
+    /// Delete installed plugins.
+    Remove {
+        #[arg(required = true, value_enum)]
+        names: Vec<Plugin>,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -106,13 +141,18 @@ impl Page {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let source = fs::canonicalize(&cli.file).with_context(|| format!("opening {}", cli.file.display()))?;
+    if let Some(Command::Plugins { action }) = cli.command {
+        return plugins_command(action);
+    }
+    let file = cli.file.expect("clap requires a file without a subcommand");
+    let source = fs::canonicalize(&file).with_context(|| format!("opening {}", file.display()))?;
     let output = match &cli.output {
         Some(path) => path.clone(),
         None => default_output(&source)?,
     };
 
-    let page = Page { source, output, theme: cli.theme, renderer: Renderer::new()? };
+    let plugins = if cli.no_plugins { Vec::new() } else { plugins::load_installed()? };
+    let page = Page { source, output, theme: cli.theme, renderer: Renderer::new(plugins)? };
     page.write()?;
     // Canonical so it matches the file:// url terminal-browser reports.
     let output = fs::canonicalize(&page.output)?;
@@ -150,6 +190,31 @@ fn main() -> Result<()> {
     watch(&page, &output, &before, &log);
     if let Some(waiter) = waiter {
         waiter.join().ok();
+    }
+    Ok(())
+}
+
+fn plugins_command(action: PluginsAction) -> Result<()> {
+    match action {
+        PluginsAction::List => {
+            for &plugin in Plugin::value_variants() {
+                let status = if plugin.path()?.is_file() { "installed" } else { "not installed" };
+                println!("{:<10} {:<8} {status}", plugin.name(), plugin.version());
+            }
+        }
+        PluginsAction::Install { names } => {
+            for plugin in names {
+                eprintln!("tmdview: downloading {} {}", plugin.name(), plugin.version());
+                let path = plugin.install()?;
+                eprintln!("tmdview: installed {}", path.display());
+            }
+        }
+        PluginsAction::Remove { names } => {
+            for plugin in names {
+                let what = if plugin.remove()? { "removed" } else { "wasn't installed:" };
+                eprintln!("tmdview: {what} {}", plugin.name());
+            }
+        }
     }
     Ok(())
 }

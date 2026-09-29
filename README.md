@@ -29,6 +29,7 @@ tmdview notes.md -s right -w          # open beside this pane, reload on save
 tmdview notes.md -s down --size 0.4   # a smaller pane below
 tmdview notes.md -t dark              # force the dark theme
 tmdview notes.md --no-open -o out.html  # only write the HTML file
+tmdview plugins install mermaid       # draw ```mermaid blocks as diagrams from now on
 ```
 
 | Flag | What it does |
@@ -39,6 +40,7 @@ tmdview notes.md --no-open -o out.html  # only write the HTML file
 | `-t, --theme <t>` | `auto` (default, follows the system), `light` or `dark` |
 | `-o, --output <path>` | Write the HTML here instead of a temp file |
 | `--no-open` | Write the HTML and print its path, without opening a browser |
+| `--no-plugins` | Don't use installed plugins for this run |
 
 ## What it renders
 
@@ -48,6 +50,25 @@ tmdview notes.md --no-open -o out.html  # only write the HTML file
 - Relative links and images, resolved from the Markdown file's folder
 
 Math is recognized but shown as plain text, not typeset.
+
+## Plugins
+
+A plugin is a JavaScript library that tmdview downloads once, so the install from git stays small.
+After that, tmdview uses it on every page that needs it, and it works offline.
+
+```sh
+tmdview plugins list              # every plugin, its version, and whether it's installed
+tmdview plugins install mermaid   # download it
+tmdview plugins remove mermaid    # delete it
+```
+
+| Plugin | What it does | Cost |
+|---|---|---|
+| `mermaid` | Draws ` ```mermaid ` blocks as diagrams, in the page's light or dark theme | A 5.5 MB download. It's added to each page that has a diagram, and only those |
+
+Each version is pinned in tmdview with its SHA-256 checksum, and `install` rejects a download that doesn't match.
+Files go in your data folder, for example `~/Library/Application Support/tmdview/plugins/` on macOS.
+Mermaid is MIT-licensed.
 
 ## How it works
 
