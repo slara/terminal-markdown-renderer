@@ -70,10 +70,41 @@ impl Loaded {
             out.push_str(&format!("<style>\n{}\n</style>\n", neutralize(css, "</style")));
         }
         for js in &self.scripts {
-            out.push_str(&format!("<script>\n{}\n</script>\n", neutralize(js, "</script")));
+            out.push_str(&script_tag(js));
         }
         out
     }
+}
+
+/// A `<script>` that runs `js` exactly as written.
+///
+/// Scripts are inlined, with `</script` broken up so it can't end the tag. If a script
+/// also has `<!--` and `<script`, the HTML parser can enter its "double-escaped" state,
+/// where even the real `</script>` no longer ends the tag. Rewriting those in the code
+/// could break it (`\!` is a syntax error in a `u`-flag regex), so that rare script goes
+/// in as a base64 `data:` URL instead, which contains no markup at all.
+fn script_tag(js: &str) -> String {
+    let lower = js.to_ascii_lowercase();
+    if lower.contains("<!--") && lower.contains("<script") {
+        return format!("<script src=\"data:text/javascript;charset=utf-8;base64,{}\"></script>\n", base64(js.as_bytes()));
+    }
+    format!("<script>\n{}\n</script>\n", neutralize(js, "</script"))
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().enumerate().fold(0u32, |n, (i, &b)| n | (b as u32) << (16 - 8 * i));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }
 
 /// Break up `tag` (any case) so inlined code can't close the element it's in.
@@ -209,6 +240,24 @@ mod tests {
     #[test]
     fn inlined_code_cannot_close_its_tag() {
         assert_eq!(neutralize(r#"x = "</script>"; y = "</SCRIPT""#, "</script"), r#"x = "<\/script>"; y = "<\/SCRIPT""#);
+    }
+
+    #[test]
+    fn scripts_that_could_swallow_the_page_go_in_as_data_urls() {
+        let risky = r#"const a = "<!--"; const b = "<script>";"#;
+        let tag = script_tag(risky);
+        assert!(tag.starts_with(r#"<script src="data:text/javascript;charset=utf-8;base64,"#), "{tag}");
+        assert!(!tag.contains("<!--"), "{tag}");
+        assert_eq!(script_tag("let x = 1;"), "<script>\nlet x = 1;\n</script>\n");
+    }
+
+    #[test]
+    fn base64_matches_the_standard_encoding() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64("<!--é".as_bytes()), "PCEtLcOp");
     }
 
     #[test]

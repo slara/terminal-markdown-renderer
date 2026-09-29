@@ -85,8 +85,10 @@ Install works like this:
 5. Show what it takes over and ask for confirmation. Without a terminal, this needs `--yes`.
 6. Rename the staging folder into place. If any step fails, the staging folder is deleted.
 
-`update` fetches, then moves to the newest commit of `--ref`, or of the default branch if no ref was given.
-It runs the same checks and the same question, and goes back to the old commit if either fails.
+`update` fetches, then finds the newest commit of `--ref`, or of the default branch if no ref was given.
+It checks that commit in a throwaway clone, `<plugins>/<name>/.update-<pid>/`, made with `git clone --shared` so it copies no objects.
+It runs the same checks and asks the same question, and only then moves the installed repo to the new commit.
+Until you answer yes, the installed plugin doesn't change, even if you press Ctrl+C or the process is killed.
 
 ### Rendering
 
@@ -104,6 +106,8 @@ For each fenced code block, the renderer takes the first of these that applies:
 A claimed block becomes `<pre class="tmdview-plugin" data-plugin="<name>" data-lang="<lang>"><code>…</code></pre>`.
 The renderer only adds a plugin's files when the page has at least one block the plugin claimed, so pages without diagrams stay small even with Mermaid installed.
 Before inlining, it rewrites `</script` as `<\/script` in scripts, and `</style` as `<\/style` in styles, so a file can't close its own tag.
+A script that contains both `<!--` and `<script` could still put the HTML parser in its "double-escaped" state, where even the real `</script>` doesn't end the tag and the rest of the page is swallowed.
+Rewriting those strings could break the code, so that rare script goes in as a base64 `data:` URL instead, which has no markup in it.
 
 The files go in at the `{{plugins}}` marker in `template.html`.
 tmdview splits the template at that marker before filling in the other placeholders.
@@ -249,14 +253,14 @@ It restores on the `load` event, after images have loaded, so the page is tall e
 
 ## Tests
 
-`cargo test` runs 16 unit tests. They cover:
+`cargo test` runs 18 unit tests. They cover:
 
 - heading IDs, including duplicates and custom `{#id}`s
 - syntax colors, and plain output for unknown languages
 - tables, task lists and strikethrough
 - percent-encoding and decoding of file paths
 - plugins: claimed blocks, files added once, pages without claimed blocks left alone, and the claim order (claimed language, syntect, fallback, plain)
-- conflicts between plugins, and escaping `</script` in inlined files
+- conflicts between plugins, escaping `</script` in inlined files, the `data:` URL for risky scripts, and base64
 - git plugins: GitHub shorthand, plugin names, and manifest files that try to leave the repository
 
 Downloading and cloning plugins have no automated tests, since they need the network or a git repository.

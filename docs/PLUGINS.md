@@ -111,4 +111,5 @@ After you commit a change, run `tmdview plugins update d2` to pick it up.
 
 - The page is opened as a `file://` URL, and it's meant to work offline. Don't load anything from the network.
 - An inlined `</script` would end the script early, so tmdview rewrites it as `<\/script`. Inside a JavaScript string or regex that means the same thing. It does the same for `</style` in CSS.
+- A script that contains both `<!--` and `<script` is added as a base64 `data:` URL instead of inline, because the HTML parser could otherwise misread where it ends. It runs the same either way.
 - Your code runs in every page that uses the plugin, and users are warned about that before they install it.

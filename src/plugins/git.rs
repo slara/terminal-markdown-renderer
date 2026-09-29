@@ -136,29 +136,29 @@ pub fn update(name: &str, yes: bool) -> Result<()> {
         return Ok(());
     }
 
-    git(&repo, &["checkout", "--quiet", "--detach", &new])?;
-    let checked = (|| -> Result<String> {
-        let manifest = read_manifest(&repo)?;
-        if manifest.name != name {
-            bail!("the new commit renames the plugin to {}; reinstall it instead", manifest.name);
-        }
-        let summary = summarize(&manifest, &source.url, &new[..7]);
-        check_conflicts(&load_repo(&repo, manifest)?, &load_installed()?)?;
-        Ok(summary)
-    })();
-    let accepted = checked.and_then(|summary| {
-        eprintln!("{summary}");
-        eprintln!("Updating {name} from {} to {}.", &old[..7], &new[..7]);
-        confirm(&format!("Update {name}?"), yes)
-    });
-    if let Ok(true) = accepted {
-        eprintln!("tmdview: updated {name}");
+    // Check the new commit in a throwaway clone that shares the installed repo's objects,
+    // so the installed plugin doesn't change until the user agrees, even on Ctrl+C.
+    let staging = Staging(dir.join(format!(".update-{}", std::process::id())));
+    let _ = fs::remove_dir_all(&staging.0);
+    run_git(Command::new("git").args(["clone", "--quiet", "--shared", "--no-checkout"]).arg(&repo).arg(&staging.0))
+        .context("preparing the update")?;
+    git(&staging.0, &["checkout", "--quiet", "--detach", &new])?;
+    let manifest = read_manifest(&staging.0).with_context(|| format!("kept {name} at {}", &old[..7]))?;
+    if manifest.name != name {
+        bail!("the new commit renames the plugin to {}; reinstall it instead", manifest.name);
+    }
+    let summary = summarize(&manifest, &source.url, &new[..7]);
+    check_conflicts(&load_repo(&staging.0, manifest)?, &load_installed()?)
+        .with_context(|| format!("kept {name} at {}", &old[..7]))?;
+
+    eprintln!("{summary}");
+    eprintln!("Updating {name} from {} to {}.", &old[..7], &new[..7]);
+    if !confirm(&format!("Update {name}?"), yes)? {
+        eprintln!("tmdview: kept {name} at {}", &old[..7]);
         return Ok(());
     }
-    // Declined or broken: go back to the commit that worked.
-    git(&repo, &["checkout", "--quiet", "--detach", &old])?;
-    accepted.with_context(|| format!("kept {name} at {}", &old[..7]))?;
-    eprintln!("tmdview: kept {name} at {}", &old[..7]);
+    git(&repo, &["checkout", "--quiet", "--detach", &new])?;
+    eprintln!("tmdview: updated {name}");
     Ok(())
 }
 
