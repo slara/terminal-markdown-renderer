@@ -73,6 +73,8 @@ tmdview plugins remove highlight
 | `mermaid` (built in) | Draws ` ```mermaid ` blocks as diagrams, in the page's light or dark theme | A 5.5 MB download, added only to pages that have a diagram |
 | [`slara/tmdview-highlight`](https://github.com/slara/tmdview-highlight) | Colors languages tmdview can't, such as TypeScript, Kotlin and Dockerfile, with highlight.js | About 140 KB, added only to pages that need it |
 
+![The highlight plugin coloring TypeScript, Kotlin and Dockerfile blocks beside the Markdown source](docs/screenshot-highlight.png)
+
 **Built-in plugins** are pinned in tmdview with a SHA-256 checksum, and `install` rejects a download that doesn't match.
 
 **Git plugins** come from any git repository: a URL, GitHub shorthand (`owner/repo`) or a local path.
