@@ -1,7 +1,7 @@
 # Architecture
 
 This page explains how tmdview works, for anyone reading or changing the code.
-The whole program is about 900 lines of Rust in five files.
+The whole program is about 1,450 lines of Rust in seven files.
 
 ## What happens when you run it
 
@@ -32,21 +32,33 @@ flowchart LR
 | `src/render.rs` | Markdown to a full HTML page, syntax colors, heading IDs, file URLs |
 | `src/template.html` | Page layout, CSS for both themes, the script that keeps your scroll position |
 | `src/browser.rs` | Runs the `terminal-browser` command and reads its JSON output |
-| `src/plugins.rs` | Plugins: pinned downloads, install and remove, which code blocks each one claims, its HTML and its scripts |
+| `src/plugins/mod.rs` | The `plugins` subcommand, loading installed plugins, conflict checks, inlining their files |
+| `src/plugins/builtin.rs` | Built-in plugins: pinned downloads with checksums, and their start-up scripts |
+| `src/plugins/git.rs` | Git plugins: the manifest, cloning, updating and removing |
 
 `template.html` is built into the binary with `include_str!`, so tmdview is a single file with nothing to install next to it.
 Plugins are the one exception, and they're optional.
 
 ## Plugins
 
-A plugin is a client-side library that tmdview downloads once and inlines into pages.
-Libraries aren't kept in the repo, so `cargo install --git` doesn't have to download them.
+A plugin is JavaScript and CSS that tmdview inlines into pages that have a code block it claims.
+There are 2 kinds, and both install into `<data folder>/tmdview/plugins/<name>/`.
+The data folder comes from the `dirs` crate.
 
-### Installing
+| Kind | Where it comes from | Example |
+|---|---|---|
+| Built-in | A pinned download described in `builtin.rs` | `mermaid` |
+| Git | Any git repository with a `tmdview-plugin.toml` manifest | `slara/tmdview-highlight` |
 
-Each plugin has a `Spec` in `plugins.rs`: a name, a pinned version, a URL and a SHA-256 checksum.
+Neither is kept in this repo, so `cargo install --git` stays small.
+Either way, a plugin becomes a `Loaded` value: its name, the languages it claims, whether it's the fallback, and its files' contents.
+[PLUGINS.md](PLUGINS.md) is the guide for plugin authors.
+
+### Built-in plugins
+
+Each built-in plugin has a `Spec` in `builtin.rs`: a name, a pinned version, a URL and a SHA-256 checksum, plus the languages it claims and a start-up script.
 `tmdview plugins install <name>` downloads the URL with `ureq`, checks the checksum, and saves the file to
-`<data folder>/tmdview/plugins/<name>/<version>/`, where the data folder comes from the `dirs` crate.
+`<plugins>/<name>/<version>/`.
 It writes a temp file and renames it, so a failed install never leaves a partial library.
 A download over 32 MB, or one with the wrong checksum, is rejected.
 
@@ -56,30 +68,50 @@ The version is part of the path, so when tmdview pins a new version, the old fil
 
 To bump a plugin, change `version`, `url` and `sha256` together.
 Get the checksum with `curl -sL <url> | shasum -a 256`.
+To add one, add a `Builtin` variant and its `Spec`.
+
+### Git plugins
+
+`git.rs` runs the user's own `git` command, not a git library.
+That way private repositories work with the user's SSH keys and credential helpers, and git's prompts and errors reach the terminal.
+
+A git plugin lives in `<plugins>/<name>/`, with the clone in `repo/` and a `source.json` that records the URL and the `--ref`, if one was given.
+Install works like this:
+
+1. Turn the source into a URL. `owner/repo` becomes a GitHub URL, and a local path becomes absolute so `update` can find it later.
+2. Clone it into a staging folder, `<plugins>/.install-<pid>/`, and check out `--ref` if given.
+3. Read and check the manifest: a valid name that isn't a built-in's, at least one language or `fallback`, and files that stay inside the repository (symlinks included).
+4. Refuse the plugin if another installed plugin claims one of its languages, or if both are the fallback.
+5. Show what it takes over and ask for confirmation. Without a terminal, this needs `--yes`.
+6. Rename the staging folder into place. If any step fails, the staging folder is deleted.
+
+`update` fetches, then moves to the newest commit of `--ref`, or of the default branch if no ref was given.
+It runs the same checks and the same question, and goes back to the old commit if either fails.
 
 ### Rendering
 
 At start-up, tmdview reads every installed plugin into memory, unless `--no-plugins` is set.
-Each plugin is a variant of the `Plugin` enum, with three methods:
+Built-ins come first, then git plugins by name.
+A git plugin that fails to load is skipped with a warning, so it can't stop the page from opening.
 
-| Method | Job |
-|---|---|
-| `claims(lang)` | Whether it takes over fenced code blocks with this language tag |
-| `block(src)` | The HTML for a claimed block, used instead of syntect's `<pre>` |
-| `scripts(library)` | The `<script>` tags added before `</body>`, once per page |
+For each fenced code block, the renderer takes the first of these that applies:
 
-The renderer only adds a plugin's scripts when the page has at least one block the plugin claimed.
-Pages without diagrams stay small even with Mermaid installed.
+1. A plugin that claims the language.
+2. syntect.
+3. The fallback plugin, if the block has a language.
+4. Plain escaped text.
 
-The scripts go in at the `{{plugins}}` marker in `template.html`.
+A claimed block becomes `<pre class="tmdview-plugin" data-plugin="<name>" data-lang="<lang>"><code>…</code></pre>`.
+The renderer only adds a plugin's files when the page has at least one block the plugin claimed, so pages without diagrams stay small even with Mermaid installed.
+Before inlining, it rewrites `</script` as `<\/script` in scripts, and `</style` as `<\/style` in styles, so a file can't close its own tag.
+
+The files go in at the `{{plugins}}` marker in `template.html`.
 tmdview splits the template at that marker before filling in the other placeholders.
 That way it never searches a 5.5 MB library, or the page body, for `{{...}}`.
 
-Mermaid draws after the page loads, and that changes the page height.
-Its start-up script stores the drawing promise in `window.tmdviewReady`.
-The scroll script waits for that promise before it restores your position.
-
-To add a plugin, add a variant and its `Spec`, then fill in the three methods.
+Before the plugins, the template defines `tmdview.ready(promise)`.
+A plugin that draws after the page loads, like Mermaid, passes its drawing promise to it.
+The scroll script waits for all of them before it restores your position, since drawing changes the page height.
 
 ## Rendering
 
@@ -204,6 +236,8 @@ It restores on the `load` event, after images have loaded, so the page is tall e
 | One self-contained HTML file | Works offline, easy to save with `-o` | Plugins inline their whole library, so a Mermaid page is about 5.5 MB |
 | Plugins are downloaded, not in the repo | A git install stays small, and you only get what you use | One network step per plugin, and `ureq` adds about 2 MB to the binary |
 | Installed means on | Nothing to enable per run, since scripts only go into pages that need them | Use `--no-plugins` to turn them off for one run |
+| Git plugins use the `git` command | Private repositories and credentials work with no extra setup | Needs `git` installed, but only for git plugins |
+| Git plugins ask before installing | They run someone else's JavaScript in your pages | Scripts have to pass `--yes` |
 
 ## Known limits
 
@@ -215,13 +249,15 @@ It restores on the `load` event, after images have loaded, so the page is tall e
 
 ## Tests
 
-`cargo test` runs 10 unit tests. They cover:
+`cargo test` runs 16 unit tests. They cover:
 
 - heading IDs, including duplicates and custom `{#id}`s
 - syntax colors, and plain output for unknown languages
 - tables, task lists and strikethrough
 - percent-encoding and decoding of file paths
-- the Mermaid plugin: off when not loaded, claims blocks when loaded, adds its script once, and skips pages without diagrams
+- plugins: claimed blocks, files added once, pages without claimed blocks left alone, and the claim order (claimed language, syntect, fallback, plain)
+- conflicts between plugins, and escaping `</script` in inlined files
+- git plugins: GitHub shorthand, plugin names, and manifest files that try to leave the repository
 
-Downloading plugins has no automated tests, since it needs the network.
+Downloading and cloning plugins have no automated tests, since they need the network or a git repository.
 Nothing that runs `terminal-browser` has automated tests, because it needs a real terminal and a running browser.

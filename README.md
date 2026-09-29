@@ -18,8 +18,7 @@ You need [Rust](https://rustup.rs) and [terminal-browser](https://github.com/zen
 1. Install: `cargo install --git https://github.com/slara/terminal-markdown-renderer`
 2. Open a file beside your shell: `tmdview README.md --split right`
 3. Add `--watch` to reload the page each time you save the file.
-
-To close the browser pane, press `Ctrl+Q` or `Ctrl+C` inside it.
+4. Close the viewer: press `Ctrl+Q` inside the browser pane (`Ctrl+C` also works).
 
 ## Usage
 
@@ -42,6 +41,10 @@ tmdview plugins install mermaid       # draw ```mermaid blocks as diagrams from 
 | `--no-open` | Write the HTML and print its path, without opening a browser |
 | `--no-plugins` | Don't use installed plugins for this run |
 
+| Key (inside the browser pane) | What it does |
+|---|---|
+| `Ctrl+Q` or `Ctrl+C` | Close the viewer. With `--watch`, tmdview stops within 2 seconds. |
+
 ## What it renders
 
 - GitHub-flavored Markdown: tables, task lists, footnotes, strikethrough
@@ -53,21 +56,32 @@ Math is recognized but shown as plain text, not typeset.
 
 ## Plugins
 
-A plugin is a JavaScript library that tmdview downloads once, so the install from git stays small.
+A plugin adds JavaScript that draws or colors certain code blocks.
+You install it once, so the install from git stays small.
 After that, tmdview uses it on every page that needs it, and it works offline.
 
 ```sh
-tmdview plugins list              # every plugin, its version, and whether it's installed
-tmdview plugins install mermaid   # download it
-tmdview plugins remove mermaid    # delete it
+tmdview plugins list                              # built-in and installed plugins
+tmdview plugins install mermaid                   # a built-in plugin
+tmdview plugins install slara/tmdview-highlight   # a plugin from GitHub
+tmdview plugins update                            # update every git plugin
+tmdview plugins remove highlight
 ```
 
 | Plugin | What it does | Cost |
 |---|---|---|
-| `mermaid` | Draws ` ```mermaid ` blocks as diagrams, in the page's light or dark theme | A 5.5 MB download. It's added to each page that has a diagram, and only those |
+| `mermaid` (built in) | Draws ` ```mermaid ` blocks as diagrams, in the page's light or dark theme | A 5.5 MB download, added only to pages that have a diagram |
+| [`slara/tmdview-highlight`](https://github.com/slara/tmdview-highlight) | Colors languages tmdview can't, such as TypeScript, Kotlin and Dockerfile, with highlight.js | About 140 KB, added only to pages that need it |
 
-Each version is pinned in tmdview with its SHA-256 checksum, and `install` rejects a download that doesn't match.
-Files go in your data folder, for example `~/Library/Application Support/tmdview/plugins/` on macOS.
+**Built-in plugins** are pinned in tmdview with a SHA-256 checksum, and `install` rejects a download that doesn't match.
+
+**Git plugins** come from any git repository: a URL, GitHub shorthand (`owner/repo`) or a local path.
+tmdview runs your own `git`, so private repositories work with your usual SSH keys or credentials.
+Add `--ref <branch, tag or commit>` to pin a version.
+Before installing or updating, tmdview shows what the plugin takes over and asks you to confirm, because it runs the plugin's JavaScript in your pages. Pass `--yes` to skip the question.
+
+Plugins go in your data folder, for example `~/Library/Application Support/tmdview/plugins/` on macOS.
+To write one, see [docs/PLUGINS.md](docs/PLUGINS.md).
 Mermaid is MIT-licensed.
 
 ## How it works

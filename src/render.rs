@@ -9,7 +9,7 @@ use syntect::html::{css_for_theme_with_class_style, ClassStyle, ClassedHTMLGener
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
-use crate::plugins::{Loaded, Plugin};
+use crate::plugins::Loaded;
 
 const TEMPLATE: &str = include_str!("template.html");
 const CLASS_STYLE: ClassStyle = ClassStyle::SpacedPrefixed { prefix: "hl-" };
@@ -50,15 +50,15 @@ impl Renderer {
             .replace("{{base}}", &escape(&base))
             .replace("{{highlight_css}}", &self.highlight_css)
             .replace("{{body}}", &body);
-        for loaded in self.plugins.iter().filter(|l| used.contains(&l.plugin)) {
-            page.push_str(&loaded.plugin.scripts(&loaded.library));
+        for &i in &used {
+            page.push_str(&self.plugins[i].assets());
         }
         page.push_str(tail);
         page
     }
 
-    /// The page body, plus the plugins that claimed at least one block in it.
-    fn render_body(&self, markdown: &str) -> (String, Vec<Plugin>) {
+    /// The page body, plus the indexes of the plugins that claimed at least one block in it.
+    fn render_body(&self, markdown: &str) -> (String, Vec<usize>) {
         let options = Options::ENABLE_TABLES
             | Options::ENABLE_FOOTNOTES
             | Options::ENABLE_STRIKETHROUGH
@@ -70,7 +70,7 @@ impl Renderer {
 
         let mut events = Vec::new();
         let mut code: Option<(String, String)> = None; // (lang, source)
-        let mut used: Vec<Plugin> = Vec::new();
+        let mut used: Vec<usize> = Vec::new();
         let mut heading: Option<(Tag, Vec<Event>)> = None; // (start tag, inner events)
         // Explicit `{#id}`s are reserved up front so generated slugs never collide with them.
         let mut used_ids: HashSet<String> = Parser::new_ext(markdown, options)
@@ -86,15 +86,7 @@ impl Renderer {
                 match event {
                     Event::Text(t) => src.push_str(&t),
                     Event::End(TagEnd::CodeBlock) => {
-                        let html = match self.plugins.iter().map(|l| l.plugin).find(|p| p.claims(lang)) {
-                            Some(plugin) => {
-                                if !used.contains(&plugin) {
-                                    used.push(plugin);
-                                }
-                                plugin.block(src)
-                            }
-                            None => self.highlight(lang, src),
-                        };
+                        let html = self.code_block(lang, src, &mut used);
                         code = None;
                         events.push(Event::Html(html.into()));
                     }
@@ -141,22 +133,42 @@ impl Renderer {
         (out, used)
     }
 
-    fn highlight(&self, lang: &str, src: &str) -> String {
-        let syntax = (!lang.is_empty())
-            .then(|| self.syntaxes.find_syntax_by_token(lang))
-            .flatten();
-        let label = if lang.is_empty() { String::new() } else { format!(" data-lang=\"{}\"", escape(lang)) };
-        let Some(syntax) = syntax else {
-            return format!("<pre{label}><code>{}</code></pre>\n", escape(src));
-        };
-        let mut generator = ClassedHTMLGenerator::new_with_class_style(syntax, &self.syntaxes, CLASS_STYLE);
-        for line in LinesWithEndings::from(src) {
-            if generator.parse_html_for_line_which_includes_newline(line).is_err() {
-                return format!("<pre{label}><code>{}</code></pre>\n", escape(src));
+    /// A fenced code block. In order: a plugin that claims its language, syntect,
+    /// a fallback plugin, then plain escaped text. Records which plugin it used.
+    fn code_block(&self, lang: &str, src: &str, used: &mut Vec<usize>) -> String {
+        let claimed = self.plugins.iter().position(|p| p.claims(lang));
+        if claimed.is_none() {
+            if let Some(html) = self.highlight(lang, src) {
+                return html;
             }
         }
-        format!("<pre class=\"hl-code\"{label}><code>{}</code></pre>\n", generator.finalize())
+        let fallback = || (!lang.is_empty()).then(|| self.plugins.iter().position(|p| p.fallback)).flatten();
+        let label = label(lang);
+        match claimed.or_else(fallback) {
+            Some(i) => {
+                if !used.contains(&i) {
+                    used.push(i);
+                }
+                let name = escape(&self.plugins[i].name);
+                format!("<pre class=\"tmdview-plugin\" data-plugin=\"{name}\"{label}><code>{}</code></pre>\n", escape(src))
+            }
+            None => format!("<pre{label}><code>{}</code></pre>\n", escape(src)),
+        }
     }
+
+    /// Syntax-colored HTML, or `None` if syntect doesn't know the language.
+    fn highlight(&self, lang: &str, src: &str) -> Option<String> {
+        let syntax = (!lang.is_empty()).then(|| self.syntaxes.find_syntax_by_token(lang)).flatten()?;
+        let mut generator = ClassedHTMLGenerator::new_with_class_style(syntax, &self.syntaxes, CLASS_STYLE);
+        for line in LinesWithEndings::from(src) {
+            generator.parse_html_for_line_which_includes_newline(line).ok()?;
+        }
+        Some(format!("<pre class=\"hl-code\"{}><code>{}</code></pre>\n", label(lang), generator.finalize()))
+    }
+}
+
+fn label(lang: &str) -> String {
+    if lang.is_empty() { String::new() } else { format!(" data-lang=\"{}\"", escape(lang)) }
 }
 
 /// Prefix every selector in syntect's generated CSS with `scope`.
@@ -246,25 +258,42 @@ mod tests {
     }
 
     #[test]
-    fn mermaid_plugin_claims_blocks_and_adds_its_script_once() {
-        let renderer = Renderer::new(vec![fake_mermaid()]).unwrap();
+    fn plugin_claims_blocks_and_adds_its_assets_once() {
+        let renderer = Renderer::new(vec![plugin("mermaid", &["mermaid"], false)]).unwrap();
         let md = "```mermaid\ngraph LR; a-->b\n```\n\n```mermaid\ngraph TD; c-->d\n```\n";
         let page = renderer.render(md, "t", Path::new("/"), "auto");
-        assert!(page.contains("<pre class=\"mermaid\">graph LR; a--&gt;b\n</pre>"), "{page}");
-        assert_eq!(page.matches("/* mermaid library */").count(), 1);
-        assert_eq!(page.matches("window.tmdviewReady = mermaid.run").count(), 1);
+        let block = r#"<pre class="tmdview-plugin" data-plugin="mermaid" data-lang="mermaid"><code>graph LR; a--&gt;b"#;
+        assert!(page.contains(block), "{page}");
+        assert_eq!(page.matches("/* mermaid script */").count(), 1);
+        assert_eq!(page.matches("/* mermaid style */").count(), 1);
         assert!(!page.contains("{{plugins}}"));
     }
 
     #[test]
-    fn mermaid_plugin_skips_pages_without_diagrams() {
-        let renderer = Renderer::new(vec![fake_mermaid()]).unwrap();
+    fn plugins_skip_pages_without_their_blocks() {
+        let renderer = Renderer::new(vec![plugin("mermaid", &["mermaid"], false)]).unwrap();
         let page = renderer.render("# Hi\n", "t", Path::new("/"), "auto");
-        assert!(!page.contains("mermaid library"));
+        assert!(!page.contains("mermaid script"));
     }
 
-    fn fake_mermaid() -> Loaded {
-        Loaded { plugin: Plugin::Mermaid, library: "/* mermaid library */".into() }
+    #[test]
+    fn claimed_languages_beat_syntect_and_fallback_only_takes_the_rest() {
+        let renderer = Renderer::new(vec![plugin("hl", &["python"], true)]).unwrap();
+        let html = renderer.render_body("```python\nx\n```\n\n```rust\nfn f() {}\n```\n\n```zig\nx\n```\n\n```\nx\n```\n").0;
+        assert!(html.contains(r#"data-plugin="hl" data-lang="python""#), "{html}");
+        assert!(html.contains(r#"class="hl-code" data-lang="rust""#), "{html}");
+        assert!(html.contains(r#"data-plugin="hl" data-lang="zig""#), "{html}");
+        assert!(html.contains("<pre><code>x\n</code></pre>"), "a block with no language stays plain: {html}");
+    }
+
+    fn plugin(name: &str, languages: &[&str], fallback: bool) -> Loaded {
+        Loaded {
+            name: name.into(),
+            languages: languages.iter().map(|l| l.to_string()).collect(),
+            fallback,
+            scripts: vec![format!("/* {name} script */")],
+            styles: vec![format!("/* {name} style */")],
+        }
     }
 
     #[test]

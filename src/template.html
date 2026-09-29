@@ -116,16 +116,19 @@ pre.hl-code { background: var(--subtle-bg) !important; }
 <main>
 {{body}}
 </main>
+<script>
+// Plugins that draw after load pass their promise to `tmdview.ready`, since drawing changes the page height.
+window.tmdview = { pending: [], ready(promise) { this.pending.push(promise); } };
+</script>
 {{plugins}}<script>
 // Keep the scroll position when tmdview reloads the page after an edit.
 (() => {
   const key = "tmdview-scroll:" + location.pathname;
   try {
     const y = sessionStorage.getItem(key);
-    // Wait for images so the page is tall enough to scroll back to where it was.
-    // Plugins that draw after load (Mermaid) set `tmdviewReady`, since they change the height too.
+    // Wait for images and for plugins, so the page is tall enough to scroll back to where it was.
     if (y !== null) addEventListener("load", () =>
-      Promise.resolve(window.tmdviewReady).finally(() => window.scrollTo(0, +y)));
+      Promise.allSettled(tmdview.pending).then(() => window.scrollTo(0, +y)));
     addEventListener("beforeunload", () => sessionStorage.setItem(key, String(scrollY)));
   } catch (_) {}
 })();

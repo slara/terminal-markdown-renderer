@@ -1,20 +1,16 @@
-//! Plugins: client-side libraries that `tmdview plugins install` downloads into the
-//! user's data folder. An installed plugin is inlined into pages that have a code
-//! block it claims.
+//! Built-in plugins: a pinned library download plus a start-up script kept here.
 
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
-use clap::ValueEnum;
 use sha2::{Digest, Sha256};
 
-use crate::render::escape;
+use super::Loaded;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub enum Plugin {
-    /// Draw ```mermaid blocks as diagrams.
+#[derive(Clone, Copy)]
+pub enum Builtin {
     Mermaid,
 }
 
@@ -25,6 +21,8 @@ struct Spec {
     url: &'static str,
     sha256: &'static str,
     file: &'static str,
+    languages: &'static [&'static str],
+    init: &'static str,
 }
 
 const MERMAID: Spec = Spec {
@@ -33,21 +31,23 @@ const MERMAID: Spec = Spec {
     url: "https://cdn.jsdelivr.net/npm/mermaid@12.0.0/dist/mermaid.min.js",
     sha256: "28fca7ae6ebc7ed7bb63bde63136a74bfef14f296a57e403657eeb8b32836073",
     file: "mermaid.min.js",
+    languages: &["mermaid"],
+    init: MERMAID_INIT,
 };
 
 /// Downloads bigger than this are refused.
 const MAX_DOWNLOAD: u64 = 32 * 1024 * 1024;
 
-/// An installed plugin with its library read into memory.
-pub struct Loaded {
-    pub plugin: Plugin,
-    pub library: String,
-}
+impl Builtin {
+    pub const ALL: [Builtin; 1] = [Builtin::Mermaid];
 
-impl Plugin {
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|b| b.name() == name)
+    }
+
     fn spec(self) -> &'static Spec {
         match self {
-            Plugin::Mermaid => &MERMAID,
+            Builtin::Mermaid => &MERMAID,
         }
     }
 
@@ -59,47 +59,41 @@ impl Plugin {
         self.spec().version
     }
 
-    /// Whether this plugin takes over fenced code blocks tagged `lang`.
-    pub fn claims(self, lang: &str) -> bool {
-        match self {
-            Plugin::Mermaid => lang == "mermaid",
-        }
-    }
-
-    /// HTML for a claimed code block, in place of the highlighted `<pre>`.
-    pub fn block(self, src: &str) -> String {
-        match self {
-            Plugin::Mermaid => format!("<pre class=\"mermaid\">{}</pre>\n", escape(src)),
-        }
-    }
-
-    /// Scripts appended to the page when at least one block was claimed.
-    pub fn scripts(self, library: &str) -> String {
-        let init = match self {
-            Plugin::Mermaid => MERMAID_INIT,
-        };
-        format!("<script>\n{library}\n</script>\n<script>\n{init}</script>\n")
-    }
-
-    /// `<data dir>/tmdview/plugins/<name>`, holding one folder per version.
+    /// `<plugins>/<name>`, holding one folder per version.
     fn root(self) -> Result<PathBuf> {
-        let data = dirs::data_dir().context("couldn't find your data folder")?;
-        Ok(data.join("tmdview").join("plugins").join(self.name()))
+        Ok(super::root()?.join(self.name()))
     }
 
     /// Where the pinned version's library lives once installed.
-    pub fn path(self) -> Result<PathBuf> {
+    fn path(self) -> Result<PathBuf> {
         Ok(self.root()?.join(self.version()).join(self.spec().file))
     }
 
-    /// The installed library, or `None` if the pinned version isn't installed.
+    pub fn is_installed(self) -> Result<bool> {
+        Ok(self.path()?.is_file())
+    }
+
+    /// What this plugin would claim, without its library (for conflict checks).
+    pub fn claims(self) -> Loaded {
+        let spec = self.spec();
+        Loaded {
+            name: spec.name.into(),
+            languages: spec.languages.iter().map(|l| l.to_string()).collect(),
+            fallback: false,
+            scripts: Vec::new(),
+            styles: Vec::new(),
+        }
+    }
+
+    /// The installed plugin, or `None` if the pinned version isn't installed.
     pub fn load(self) -> Result<Option<Loaded>> {
         let path = self.path()?;
-        match fs::read_to_string(&path) {
-            Ok(library) => Ok(Some(Loaded { plugin: self, library })),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(err) => Err(err).with_context(|| format!("reading {}", path.display())),
-        }
+        let library = match fs::read_to_string(&path) {
+            Ok(library) => library,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err).with_context(|| format!("reading {}", path.display())),
+        };
+        Ok(Some(Loaded { scripts: vec![library, self.spec().init.into()], ..self.claims() }))
     }
 
     /// Download the pinned version, check its SHA-256, and save it. Returns its path.
@@ -142,24 +136,21 @@ impl Plugin {
     }
 }
 
-/// Every installed plugin, loaded and ready to inline.
-pub fn load_installed() -> Result<Vec<Loaded>> {
-    let mut loaded = Vec::new();
-    for plugin in Plugin::value_variants() {
-        loaded.extend(plugin.load()?);
-    }
-    Ok(loaded)
-}
-
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Pick the Mermaid theme that matches the page's (forced or system) theme.
+/// Draw each claimed block, in the Mermaid theme that matches the page's theme.
 const MERMAID_INIT: &str = r#"(() => {
+  const blocks = [...document.querySelectorAll('pre[data-plugin="mermaid"]')];
+  for (const pre of blocks) {
+    // Mermaid reads the element's own text, so drop the <code> wrapper and the language label.
+    pre.textContent = pre.textContent;
+    pre.removeAttribute("data-lang");
+  }
   const forced = document.documentElement.dataset.theme;
   const dark = forced ? forced === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
   mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "default" });
-  window.tmdviewReady = mermaid.run({ querySelector: "pre.mermaid" });
+  tmdview.ready(mermaid.run({ nodes: blocks }));
 })();
 "#;

@@ -14,7 +14,6 @@ use std::time::{Duration, SystemTime};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 
-use plugins::Plugin;
 use render::Renderer;
 
 /// View a markdown file rendered as HTML in a browser inside the terminal.
@@ -59,26 +58,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// List, install or remove plugins.
+    /// List, install, update or remove plugins.
     Plugins {
         #[command(subcommand)]
-        action: PluginsAction,
-    },
-}
-
-#[derive(Subcommand)]
-enum PluginsAction {
-    /// Show every plugin and whether it's installed.
-    List,
-    /// Download plugins into your data folder. Installed plugins are used automatically.
-    Install {
-        #[arg(required = true, value_enum)]
-        names: Vec<Plugin>,
-    },
-    /// Delete installed plugins.
-    Remove {
-        #[arg(required = true, value_enum)]
-        names: Vec<Plugin>,
+        action: plugins::Action,
     },
 }
 
@@ -142,7 +125,7 @@ impl Page {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     if let Some(Command::Plugins { action }) = cli.command {
-        return plugins_command(action);
+        return plugins::run(action);
     }
     let file = cli.file.expect("clap requires a file without a subcommand");
     let source = fs::canonicalize(&file).with_context(|| format!("opening {}", file.display()))?;
@@ -190,31 +173,6 @@ fn main() -> Result<()> {
     watch(&page, &output, &before, &log);
     if let Some(waiter) = waiter {
         waiter.join().ok();
-    }
-    Ok(())
-}
-
-fn plugins_command(action: PluginsAction) -> Result<()> {
-    match action {
-        PluginsAction::List => {
-            for &plugin in Plugin::value_variants() {
-                let status = if plugin.path()?.is_file() { "installed" } else { "not installed" };
-                println!("{:<10} {:<8} {status}", plugin.name(), plugin.version());
-            }
-        }
-        PluginsAction::Install { names } => {
-            for plugin in names {
-                eprintln!("tmdview: downloading {} {}", plugin.name(), plugin.version());
-                let path = plugin.install()?;
-                eprintln!("tmdview: installed {}", path.display());
-            }
-        }
-        PluginsAction::Remove { names } => {
-            for plugin in names {
-                let what = if plugin.remove()? { "removed" } else { "wasn't installed:" };
-                eprintln!("tmdview: {what} {}", plugin.name());
-            }
-        }
     }
     Ok(())
 }
