@@ -17,14 +17,14 @@ You need [Rust](https://rustup.rs) and [terminal-browser](https://github.com/zen
 
 1. Install: `cargo install --git https://github.com/slara/terminal-markdown-renderer`
 2. Open a file beside your shell: `tmdview README.md --split right`
-3. Add `--watch` to reload the page each time you save the file.
+3. Edit and save the file. The page reloads each time you save.
 4. Close the viewer: press `Ctrl+Q` inside the browser pane (`Ctrl+C` also works).
 
 ## Usage
 
 ```sh
 tmdview notes.md                      # the browser takes over this pane
-tmdview notes.md -s right -w          # open beside this pane, reload on save
+tmdview notes.md -s right             # open beside this pane
 tmdview notes.md -s down --size 0.4   # a smaller pane below
 tmdview notes.md -t dark              # force the dark theme
 tmdview notes.md --no-open -o out.html  # only write the HTML file
@@ -35,7 +35,8 @@ tmdview plugins install mermaid       # draw ```mermaid blocks as diagrams from 
 |---|---|
 | `-s, --split <dir>` | Open in a new pane: `right`, `left`, `down` or `up` |
 | `--size <f>` | Share of the space the new pane takes, from 0.2 to 0.95 |
-| `-w, --watch` | Rebuild the page and reload the tab when the file changes |
+| `--no-watch` | Don't reload the page when you save the file |
+| `--poll` | Check the file by polling, for network drives and other filesystems that don't report changes |
 | `-t, --theme <t>` | `auto` (default, follows the system), `light` or `dark` |
 | `-o, --output <path>` | Write the HTML here instead of a temp file |
 | `--no-open` | Write the HTML and print its path, without opening a browser |
@@ -43,7 +44,7 @@ tmdview plugins install mermaid       # draw ```mermaid blocks as diagrams from 
 
 | Key (inside the browser pane) | What it does |
 |---|---|
-| `Ctrl+Q` or `Ctrl+C` | Close the viewer. With `--watch`, tmdview stops within 2 seconds. |
+| `Ctrl+Q` or `Ctrl+C` | Close the viewer. tmdview stops watching the file within 10 seconds. |
 
 ## What it renders
 
@@ -89,7 +90,8 @@ To write a plugin, see [docs/PLUGINS.md](docs/PLUGINS.md).
 ## How it works
 
 tmdview turns the Markdown into a single HTML file, then asks terminal-browser to open it.
-With `--watch`, it checks the file 4 times a second, rebuilds the page on change and reloads that one tab.
+Then it waits for the OS to report a save (inotify on Linux, FSEvents on macOS), rebuilds the page and reloads that one tab.
+A background copy of tmdview does the watching, and it exits when you close the tab. With `--split`, your shell is free right away.
 
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) explains the modules, the data flow and the design choices.
 
@@ -98,7 +100,7 @@ With `--watch`, it checks the file 4 times a second, rebuilds the page on change
 ```sh
 cargo test      # unit tests, no browser needed
 cargo clippy --all-targets
-cargo run -- README.md --split right --watch
+cargo run -- README.md --split right
 ```
 
 The browser code is only tested by hand, because it needs a running terminal-browser.

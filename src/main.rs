@@ -1,15 +1,13 @@
 mod browser;
 mod plugins;
 mod render;
+mod watch;
 
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, SystemTime};
+use std::process::{Command as Process, Stdio};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -35,9 +33,19 @@ struct Cli {
     #[arg(long, requires = "split")]
     size: Option<f32>,
 
-    /// Re-render and reload the page whenever the file changes.
-    #[arg(short, long)]
-    watch: bool,
+    /// Don't reload the page when the file is saved.
+    #[arg(long)]
+    no_watch: bool,
+
+    /// Check the file for changes by polling, for network drives and other
+    /// filesystems that don't report changes.
+    #[arg(long)]
+    poll: bool,
+
+    /// Internal: run as the background watcher. It reloads the tab showing the page
+    /// that isn't one of these comma-separated `<browser>/<tab>`s, open before it was.
+    #[arg(long, hide = true, value_name = "TABS", value_delimiter = ',', num_args = 0..=1)]
+    attach: Option<Vec<browser::Tab>>,
 
     /// Color theme. `auto` follows the browser's preference.
     #[arg(short, long, value_enum, default_value_t = Theme::Auto)]
@@ -109,12 +117,18 @@ struct Page {
 }
 
 impl Page {
-    fn write(&self) -> Result<()> {
+    /// The Markdown and its hash, so the watcher can skip saves that change nothing.
+    fn read(&self) -> Result<(String, u64)> {
         let markdown = fs::read_to_string(&self.source)
             .with_context(|| format!("reading {}", self.source.display()))?;
+        let hash = hash_of(&markdown);
+        Ok((markdown, hash))
+    }
+
+    fn write(&self, markdown: &str) -> Result<()> {
         let title = self.source.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
         let base_dir = self.source.parent().unwrap_or(Path::new("/"));
-        let html = self.renderer.render(&markdown, &title, base_dir, self.theme.as_str());
+        let html = self.renderer.render(markdown, &title, base_dir, self.theme.as_str());
         // Write then rename, so a reload never sees a half-written page.
         let tmp = self.output.with_extension(format!("{}.tmp", std::process::id()));
         fs::write(&tmp, html).with_context(|| format!("writing {}", tmp.display()))?;
@@ -127,77 +141,80 @@ fn main() -> Result<()> {
     if let Some(Command::Plugins { action }) = cli.command {
         return plugins::run(action);
     }
-    let file = cli.file.expect("clap requires a file without a subcommand");
-    let source = fs::canonicalize(&file).with_context(|| format!("opening {}", file.display()))?;
+    let file = cli.file.as_deref().expect("clap requires a file without a subcommand");
+    let source = fs::canonicalize(file).with_context(|| format!("opening {}", file.display()))?;
     let output = match &cli.output {
         Some(path) => path.clone(),
         None => default_output(&source)?,
     };
-
     let plugins = if cli.no_plugins { Vec::new() } else { plugins::load_installed()? };
     let page = Page { source, output, theme: cli.theme, renderer: Renderer::new(plugins)? };
-    page.write()?;
+
+    if let Some(before) = &cli.attach {
+        // The tmdview that started us already wrote the page.
+        let log = Log::new(watch::log_path(&page.output));
+        match browser::find_new_tab(&fs::canonicalize(&page.output)?, before) {
+            Some(tab) => watch::run(&page, &tab, cli.poll, &log),
+            None => log.say("couldn't find the browser tab; not reloading on save"),
+        }
+        return Ok(());
+    }
+
+    page.write(&page.read()?.0)?;
     // Canonical so it matches the file:// url terminal-browser reports.
     let output = fs::canonicalize(&page.output)?;
-
     if cli.no_open {
         println!("{}", output.display());
         return Ok(());
     }
-
-    let before = browser::snapshot();
-    let child = match cli.split {
+    if !cli.no_watch {
+        // Started before the browser opens: it finds the new tab itself, which can take
+        // seconds while a browser starts, so nothing here waits for it.
+        spawn_watcher(&browser::snapshot())?;
+    }
+    match cli.split {
         Some(direction) => {
             browser::open_split(&output, direction.as_str(), cli.size)?;
-            None
+            if !cli.no_watch {
+                eprintln!("tmdview: reloading on every save; messages go to {}", watch::log_path(&page.output).display());
+            }
         }
-        None => Some(browser::open_here(&output)?),
-    };
-    if !cli.watch {
-        if let Some(mut child) = child {
-            child.wait()?;
+        None => {
+            browser::open_here(&output)?.wait()?;
         }
-        return Ok(());
-    }
-
-    // While the browser owns this terminal, anything we print would land on top of
-    // it, so messages go to a log file until the browser process exits.
-    let log = Log::new(page.output.with_extension("log"), child.is_some());
-    let waiter = child.map(|mut child| {
-        let log = log.clone();
-        thread::spawn(move || {
-            child.wait().ok();
-            log.release_terminal();
-        })
-    });
-    watch(&page, &output, &before, &log);
-    if let Some(waiter) = waiter {
-        waiter.join().ok();
     }
     Ok(())
 }
 
-/// Where watch messages go: stderr, or a log file while the browser owns the terminal.
-#[derive(Clone)]
+/// Start a detached copy of tmdview, with the same arguments plus `--attach`, that
+/// reloads the new tab on every save and exits when the tab closes. It runs in its own
+/// process group, so Ctrl-C in the shell doesn't stop it.
+fn spawn_watcher(before: &[browser::Tab]) -> Result<()> {
+    let mut cmd = Process::new(std::env::current_exe().context("finding the tmdview binary")?);
+    cmd.args(std::env::args_os().skip(1)).arg("--attach");
+    if !before.is_empty() {
+        cmd.arg(before.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
+    }
+    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    cmd.spawn().context("starting the background watcher")?;
+    Ok(())
+}
+
+/// The background watcher's messages. It has no terminal, so they go to a file,
+/// started fresh each run.
 struct Log {
     path: PathBuf,
-    terminal_owned: Arc<AtomicBool>,
 }
 
 impl Log {
-    fn new(path: PathBuf, terminal_owned: bool) -> Self {
-        Self { path, terminal_owned: Arc::new(AtomicBool::new(terminal_owned)) }
-    }
-
-    fn release_terminal(&self) {
-        self.terminal_owned.store(false, Ordering::Relaxed);
+    fn new(path: PathBuf) -> Self {
+        let _ = fs::write(&path, "");
+        Self { path }
     }
 
     fn say(&self, msg: impl std::fmt::Display) {
-        if !self.terminal_owned.load(Ordering::Relaxed) {
-            eprintln!("tmdview: {msg}");
-            return;
-        }
         let file = fs::OpenOptions::new().create(true).append(true).open(&self.path);
         if let Ok(mut file) = file {
             let _ = writeln!(file, "tmdview: {msg}");
@@ -205,48 +222,31 @@ impl Log {
     }
 }
 
+fn hash_of(value: impl Hash) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// A stable per-source temp path, so re-running tmdview on a file reuses its tab url.
 fn default_output(source: &Path) -> Result<PathBuf> {
     let dir = std::env::temp_dir().join("tmdview");
     fs::create_dir_all(&dir)?;
-    let mut hasher = DefaultHasher::new();
-    source.hash(&mut hasher);
     let stem = source.file_stem().map_or_else(|| "page".into(), |s| s.to_string_lossy());
-    Ok(dir.join(format!("{stem}-{:016x}.html", hasher.finish())))
+    Ok(dir.join(format!("{stem}-{:016x}.html", hash_of(source))))
 }
 
-/// Poll the source file and reload the tab on change, until the tab is closed.
-fn watch(page: &Page, output: &Path, before: &[browser::Tab], log: &Log) {
-    let Some(tab) = browser::find_new_tab(output, before) else {
-        log.say("couldn't find the browser tab; not watching");
-        return;
-    };
-    log.say(format_args!("watching {} (Ctrl-C to stop)", page.source.display()));
-    let mtime = |p: &Path| fs::metadata(p).and_then(|m| m.modified()).ok();
-    let mut last: Option<SystemTime> = mtime(&page.source);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    for tick in 1u64.. {
-        thread::sleep(Duration::from_millis(250));
-        // Every 2s, stop if the user closed the tab or quit the browser.
-        if tick % 8 == 0 && !browser::is_open(&tab) {
-            return;
-        }
-        let now = mtime(&page.source);
-        // Editors often replace the file (brief absence); wait until it's back.
-        if now.is_none() || now == last {
-            continue;
-        }
-        last = now;
-        if let Err(err) = page.write() {
-            log.say(format_args!("{err:#}"));
-            continue;
-        }
-        if !browser::reload(&tab) {
-            if !browser::is_open(&tab) {
-                log.say("browser tab closed; stopping");
-                return;
-            }
-            log.say("couldn't reload the browser tab; will retry on the next change");
-        }
+    #[test]
+    fn attach_takes_no_tabs_or_a_comma_list() {
+        let parse = |args: &[&str]| Cli::try_parse_from(["tmdview", "notes.md"].iter().chain(args)).unwrap().attach;
+        assert!(parse(&[]).is_none());
+        assert_eq!(parse(&["--attach"]), Some(Vec::new()));
+        let tabs = parse(&["--attach", "123-1/2,9-1/10"]).unwrap();
+        assert_eq!(tabs.iter().map(ToString::to_string).collect::<Vec<_>>(), ["123-1/2", "9-1/10"]);
+        assert!(Cli::try_parse_from(["tmdview", "notes.md", "--attach", "nope"]).is_err());
     }
 }

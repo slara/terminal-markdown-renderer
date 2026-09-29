@@ -1,6 +1,8 @@
 //! Thin wrapper over the `terminal-browser` CLI.
 
+use std::fmt;
 use std::path::Path;
+use std::str::FromStr;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
@@ -15,6 +17,23 @@ const BIN: &str = "terminal-browser";
 pub struct Tab {
     pub browser: String,
     pub id: u64,
+}
+
+/// `<browser key>/<tab id>`, the form the background watcher gets on its command line.
+impl fmt::Display for Tab {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}/{}", self.browser, self.id)
+    }
+}
+
+impl FromStr for Tab {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, String> {
+        let (browser, id) = s.rsplit_once('/').ok_or_else(|| format!("expected <browser>/<tab>, not {s:?}"))?;
+        let id = id.parse().map_err(|_| format!("the tab id in {s:?} isn't a number"))?;
+        Ok(Tab { browser: browser.to_string(), id })
+    }
 }
 
 /// A tab plus the local file it shows, if it shows one.

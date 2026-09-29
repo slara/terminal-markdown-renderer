@@ -71,7 +71,7 @@ The plugin's styles and scripts go at the end of `<body>`, after every block, so
 ```
 
 If drawing finishes later, pass its promise to `tmdview.ready(promise)`.
-When tmdview reloads the page in `--watch` mode, it waits for those promises before it restores your scroll position, since drawing changes the page height.
+When tmdview reloads the page after a save, it waits for those promises before it restores your scroll position, since drawing changes the page height.
 
 ## Light and dark themes
 
@@ -100,7 +100,7 @@ To match the page, use its CSS variables on `:root`, such as `--fg`, `--bg`, `--
 
 ```sh
 tmdview plugins install ../tmdview-d2
-tmdview notes.md -s right -w
+tmdview notes.md -s right
 ```
 
 The installed copy is a clone.

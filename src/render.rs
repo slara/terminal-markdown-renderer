@@ -137,10 +137,10 @@ impl Renderer {
     /// a fallback plugin, then plain escaped text. Records which plugin it used.
     fn code_block(&self, lang: &str, src: &str, used: &mut Vec<usize>) -> String {
         let claimed = self.plugins.iter().position(|p| p.claims(lang));
-        if claimed.is_none() {
-            if let Some(html) = self.highlight(lang, src) {
-                return html;
-            }
+        if claimed.is_none()
+            && let Some(html) = self.highlight(lang, src)
+        {
+            return html;
         }
         let fallback = || (!lang.is_empty()).then(|| self.plugins.iter().position(|p| p.fallback)).flatten();
         let label = label(lang);

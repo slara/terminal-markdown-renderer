@@ -1,25 +1,28 @@
 # Architecture
 
 This page explains how tmdview works, for anyone reading or changing the code.
-The whole program is about 1,450 lines of Rust in seven files.
+The whole program is about 1,800 lines of Rust in eight files.
 
 ## What happens when you run it
 
-Running `tmdview notes.md --split right --watch` does this:
+Running `tmdview notes.md --split right` does this:
 
 1. Reads `notes.md` and turns it into one self-contained HTML file in a temp folder.
 2. Lists the browser tabs that are already open.
 3. Runs `terminal-browser open <file> --split right`.
-4. Finds the new tab that shows the file.
-5. Checks `notes.md` every 250 ms. When it changes, rebuilds the HTML and reloads that tab.
-6. Stops when you close the tab.
+4. Starts a background copy of itself, opens the page in a new pane, and returns, so your shell is free.
+5. The background copy finds the new tab that shows the file.
+6. It waits for the OS to report a save of `notes.md`, then rebuilds the HTML and reloads that tab.
+7. It stops when you close the tab.
 
 ```mermaid
 flowchart LR
     md["notes.md"] --> render["render.rs<br/>Markdown to HTML"]
     render --> html["temp HTML file"]
     html --> tb["terminal-browser<br/>(separate program)"]
-    main["main.rs<br/>CLI and watch loop"] --> render
+    main["main.rs<br/>CLI, background watcher"] --> render
+    main --> watch["watch.rs<br/>file events, reload loop"]
+    watch --> render
     main --> browser["browser.rs<br/>runs terminal-browser"]
     browser --> tb
 ```
@@ -28,7 +31,8 @@ flowchart LR
 
 | File | Job |
 |---|---|
-| `src/main.rs` | Command-line flags, where the output goes, the watch loop, where messages go |
+| `src/main.rs` | Command-line flags, where the output goes, starting the background watcher, where messages go |
+| `src/watch.rs` | File change events with a polling fallback, and the loop that rebuilds and reloads |
 | `src/render.rs` | Markdown to a full HTML page, syntax colors, heading IDs, file URLs |
 | `src/template.html` | Page layout, CSS for both themes, the script that keeps your scroll position |
 | `src/browser.rs` | Runs the `terminal-browser` command and reads its JSON output |
@@ -185,42 +189,80 @@ Step 2 matters when you open the same file twice. Both tabs show the same URL, a
 The browser reports URLs percent-encoded (`caf%C3%A9%20notes.html`).
 tmdview decodes them before comparing, so it matches file names with spaces or accents.
 
-## The watch loop
+## Reloading on save
+
+tmdview reloads the page every time you save the Markdown file, unless you pass `--no-watch`.
 
 ```mermaid
 sequenceDiagram
+    participant O as OS (inotify / FSEvents)
     participant T as tmdview
-    participant F as notes.md
     participant B as terminal-browser
-    loop every 250 ms
-        T->>F: read the modified time
-        alt file changed
-            T->>T: rebuild HTML (write .tmp, then rename)
+    loop until the tab closes
+        alt a save of notes.md
+            O-->>T: events for the file's folder
+            T->>T: wait until 75 ms pass with no event
+            T->>T: contents changed? rebuild HTML (write .tmp, then rename)
             T->>B: action -- reload
             T->>B: action done
-        end
-        opt every 2 s
+        else 5 s with no save
             T->>B: ls --json
-            B-->>T: tabs
-            Note over T: tab gone? stop
+            Note over T: tab missing twice in a row? stop
         end
     end
 ```
 
-Checking one file's modified time 4 times a second is cheap, and it also catches editors that save by replacing the file.
-Some editors delete the file and then write a new one, so while the file is missing, tmdview waits for it to come back.
+### Where changes come from
+
+`watch.rs` uses the [notify](https://github.com/notify-rs/notify) crate, which gets change events from the OS: inotify on Linux, FSEvents on macOS.
+tmdview uses no CPU while you're not saving, and a save shows up within milliseconds.
+
+It watches the file's folder, not the file itself.
+Vim, VS Code and most editors save by writing a temp file and renaming it over the original, which replaces the file.
+On Linux, a watch on the file itself stops working after the first such save.
+Watching the folder (not its subfolders) catches every save style, and tmdview ignores events for other file names.
+
+Reading a file produces events on Linux too, so tmdview only counts events that can change the file: create, modify and remove.
+Otherwise every rebuild, which reads the file, would trigger another rebuild.
+
+One save produces several events (a write, a rename, an attribute change).
+tmdview waits until 75 ms pass without an event, then rebuilds once.
+It hashes the Markdown and skips the rebuild and reload if the contents didn't change, so `touch` or a save with no edits does nothing.
+If the file is missing for a moment, because an editor deleted it before writing it again, tmdview waits for the next event.
+
+Network drives (NFS, SMB), some Docker mounts and WSL's `/mnt` don't always report changes.
+For those, `--poll` checks the file every 250 ms and compares its contents.
+tmdview also polls on its own if the OS watcher can't start, and it says so in its log.
+
+### The background watcher
+
+In both modes, a background copy of tmdview does the watching.
+tmdview lists the open tabs, then starts itself again with the same arguments plus the hidden `--attach <tabs>` flag, which carries that list.
+Only then does it open the browser.
+The copy runs in its own process group, so Ctrl-C in the shell doesn't stop it.
+It finds the tab that shows the page and isn't in the list, which can take a few seconds while a browser starts, and then watches.
+
+Passing the same arguments means the copy renders the page exactly like the tmdview that started it, with no flag to forget.
+It doesn't write the page again, since that's already done.
+
+With `--split`, tmdview returns as soon as the pane is open.
+In the default mode, it waits until you quit the browser that took over your pane.
+If terminal-browser adds the page as a tab to a browser that's already open nearby and exits at once, tmdview returns at once too, and the watcher still reloads that tab.
+
+### Stopping
+
+When nothing changes for 5 seconds, or a reload fails, tmdview checks with `ls --json` that the tab still exists.
+It stops only when the tab is missing twice in a row, since one missing answer can be a browser hiccup.
+So it stops within about 10 seconds of you closing the tab.
+After a failed reload with the tab still open, it tries again on the next save.
 
 terminal-browser shows a notice while a tool is controlling a tab.
 tmdview runs `action done` after every reload to clear it right away.
 
-A failed reload doesn't stop the watch.
-tmdview checks whether the tab still exists, and if it does, it tries again on the next change.
-
 ### Where messages go
 
-In the default mode the browser draws over your whole pane, so a message printed there would garble the screen.
-While the browser process runs, messages go to `<temp>/tmdview/<name>-<hash>.log`.
-When the browser exits, messages go back to stderr.
+The background watcher has no terminal, so it writes to `<temp>/tmdview/<name>-<hash>.log`, starting a fresh file each time.
+With `--split`, tmdview prints that path when it starts.
 
 ## Keeping your place on reload
 
@@ -233,7 +275,8 @@ It restores on the `load` event, after images have loaded, so the page is tall e
 | Choice | Why | Cost |
 |---|---|---|
 | Run the `terminal-browser` command, don't speak its protocol | The command is its supported interface, and it handles panes and tab merging | A new process for every reload and tab check |
-| Poll the file | No extra dependency, works with every editor's save method | Up to 250 ms before a change shows |
+| OS file events, watching the folder | No CPU while idle, and a save shows up at once, whatever way the editor saves | Adds `notify`. Filesystems without events need `--poll` |
+| Always reload on save, from a background process | Saving is all you do. The shell is free right away | A process that lives until you close the tab, up to 10 seconds after |
 | Open a `file://` page, no local web server | Nothing to start, stop or secure | The page can't push its own updates, so tmdview has to reload it |
 | CSS classes for code colors | One page works in both themes | Slightly bigger HTML, since both themes' CSS is included |
 | One self-contained HTML file | Works offline, easy to save with `-o` | Plugins inline their whole library, so a Mermaid page is about 5.5 MB |
@@ -248,11 +291,11 @@ It restores on the `load` event, after images have loaded, so the page is tall e
 - Mermaid blocks are shown as code unless the `mermaid` plugin is installed.
 - A Mermaid page doesn't redraw if the system theme changes while it's open. It picks up the change on the next reload.
 - The default mode (browser takes over the pane) has only been tested by hand.
-- Only macOS has been tried.
+- The whole tool has only been tried on macOS. On Linux, only the tests have run, in a Docker container, including the file-event tests with inotify.
 
 ## Tests
 
-`cargo test` runs 18 unit tests. They cover:
+`cargo test` runs 21 tests. They cover:
 
 - heading IDs, including duplicates and custom `{#id}`s
 - syntax colors, and plain output for unknown languages
@@ -261,6 +304,8 @@ It restores on the `load` event, after images have loaded, so the page is tall e
 - plugins: claimed blocks, files added once, pages without claimed blocks left alone, and the claim order (claimed language, syntect, fallback, plain)
 - conflicts between plugins, escaping `</script` in inlined files, the `data:` URL for risky scripts, and base64
 - git plugins: GitHub shorthand, plugin names, and manifest files that try to leave the repository
+- parsing the background watcher's `--attach` list
+- watching, with real files, for both file events and polling: a plain write, a rename-over save, a write after it, and nothing for reading the file or changing another file in the folder
 
 Downloading and cloning plugins have no automated tests, since they need the network or a git repository.
 Nothing that runs `terminal-browser` has automated tests, because it needs a real terminal and a running browser.
