@@ -139,7 +139,7 @@ impl Style {
   --muted: {muted};
   --border: {border};
   --subtle-bg: {subtle};
-  --link: {blue};
+  --link: {fg};
   --mark: {yellow}55;
   --quote: {muted};
   --red: {red};
@@ -171,7 +171,9 @@ code, pre, kbd { font-family: inherit; font-size: 100%; }
 h1 { font-size: 1.5em; }
 h2 { font-size: 1.25em; }
 h3 { font-size: 1.1em; }
-:not(pre) > code { color: var(--cyan); }
+/* Links keep the text color, marked by an underline, so the page isn't dotted with blue. */
+a { text-decoration: underline; text-decoration-color: var(--muted); text-underline-offset: .2em; }
+a:hover { text-decoration-color: var(--fg); }
 .hl-comment, .hl-punctuation.hl-definition.hl-comment { color: var(--muted); font-style: italic; }
 .hl-string, .hl-markup.hl-inserted { color: var(--green); }
 .hl-constant, .hl-entity.hl-other.hl-attribute-name { color: var(--yellow); }
