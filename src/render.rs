@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use pulldown_cmark::{html, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{html, CodeBlockKind, CowStr, Event, MetadataBlockKind, Options, Parser, Tag, TagEnd};
 use syntect::highlighting::ThemeSet;
 use syntect::html::{css_for_theme_with_class_style, ClassStyle, ClassedHTMLGenerator};
 use syntect::parsing::SyntaxSet;
@@ -35,7 +35,7 @@ impl Renderer {
     /// Render `markdown` into a full HTML page. `base_dir` is used so relative
     /// links and images resolve against the markdown file's directory.
     pub fn render(&self, markdown: &str, title: &str, base_dir: &Path, theme: &str) -> String {
-        let (body, used) = self.render_body(markdown);
+        let Body { html: body, mut used, front_matter } = self.render_body(markdown);
         let base = format!("{}/", file_url(base_dir));
         let theme_attr = match theme {
             "light" | "dark" => format!(" data-theme=\"{theme}\""),
@@ -49,6 +49,15 @@ impl Renderer {
             .replace("{{base}}", &escape(&base))
             .replace("{{theme_css}}", &self.theme_css)
             .replace("{{body}}", &body);
+        if let Some(front_matter) = &front_matter {
+            page.push_str(&front_matter.script());
+            let keys = front_matter.keys();
+            for (i, plugin) in self.plugins.iter().enumerate() {
+                if plugin.wants_front_matter(&keys) && !used.contains(&i) {
+                    used.push(i);
+                }
+            }
+        }
         for &i in &used {
             page.push_str(&self.plugins[i].assets());
         }
@@ -56,8 +65,7 @@ impl Renderer {
         page
     }
 
-    /// The page body, plus the indexes of the plugins that claimed at least one block in it.
-    fn render_body(&self, markdown: &str) -> (String, Vec<usize>) {
+    fn render_body(&self, markdown: &str) -> Body {
         let options = Options::ENABLE_TABLES
             | Options::ENABLE_FOOTNOTES
             | Options::ENABLE_STRIKETHROUGH
@@ -72,7 +80,9 @@ impl Renderer {
             | Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS;
 
         let mut events = Vec::new();
-        let mut code: Option<(String, String)> = None; // (lang, source)
+        let mut code: Option<(String, String, String)> = None; // (lang, rest of the info string, source)
+        let mut front_matter: Option<FrontMatter> = None;
+        let mut in_front_matter = false;
         let mut used: Vec<usize> = Vec::new();
         let mut heading: Option<(Tag, Vec<Event>)> = None; // (start tag, inner events)
         let mut cell: Option<Vec<Event>> = None; // a table cell's inner events
@@ -84,13 +94,13 @@ impl Renderer {
             })
             .collect();
 
-        for event in Parser::new_ext(markdown, options) {
+        for (event, range) in Parser::new_ext(markdown, options).into_offset_iter() {
             // Code blocks: buffer text, then emit highlighted HTML.
-            if let Some((lang, src)) = code.as_mut() {
+            if let Some((lang, info, src)) = code.as_mut() {
                 match event {
                     Event::Text(t) => src.push_str(&t),
                     Event::End(TagEnd::CodeBlock) => {
-                        let html = self.code_block(lang, src, &mut used);
+                        let html = self.code_block(lang, info, src, &mut used);
                         code = None;
                         events.push(Event::Html(html.into()));
                     }
@@ -115,13 +125,32 @@ impl Renderer {
             }
             match event {
                 Event::Start(Tag::CodeBlock(kind)) => {
-                    let lang = match kind {
-                        CodeBlockKind::Fenced(info) => info.split_whitespace().next().unwrap_or("").to_string(),
-                        CodeBlockKind::Indented => String::new(),
+                    let (lang, info) = match &kind {
+                        CodeBlockKind::Fenced(info) => {
+                            let info = info.trim();
+                            let (lang, rest) = info.split_once(char::is_whitespace).unwrap_or((info, ""));
+                            (lang.to_string(), rest.trim().to_string())
+                        }
+                        CodeBlockKind::Indented => (String::new(), String::new()),
                     };
-                    code = Some((lang, String::new()));
+                    code = Some((lang, info, String::new()));
                 }
-                Event::Start(tag @ Tag::Heading { .. }) => heading = Some((tag, Vec::new())),
+                // Front matter isn't page content; plugins get it as data.
+                Event::Start(Tag::MetadataBlock(kind)) => {
+                    front_matter = Some(FrontMatter { kind, source: String::new() });
+                    in_front_matter = true;
+                }
+                Event::Text(t) if in_front_matter => {
+                    front_matter.as_mut().expect("set at the block's start").source.push_str(&t);
+                }
+                Event::End(TagEnd::MetadataBlock(_)) => in_front_matter = false,
+                Event::Start(Tag::Heading { level, id, classes, attrs }) => {
+                    let tag = match heading_attrs(&markdown[range]) {
+                        Some(parsed) => parsed.into_tag(level, id),
+                        None => Tag::Heading { level, id, classes, attrs },
+                    };
+                    heading = Some((tag, Vec::new()));
+                }
                 Event::Start(Tag::TableCell) => {
                     events.push(event);
                     cell = Some(Vec::new());
@@ -142,12 +171,12 @@ impl Renderer {
 
         let mut out = String::with_capacity(markdown.len() * 2);
         html::push_html(&mut out, events.into_iter());
-        (out, used)
+        Body { html: out, used, front_matter }
     }
 
     /// A fenced code block. In order: a plugin that claims its language, syntect,
     /// a fallback plugin, then plain escaped text. Records which plugin it used.
-    fn code_block(&self, lang: &str, src: &str, used: &mut Vec<usize>) -> String {
+    fn code_block(&self, lang: &str, info: &str, src: &str, used: &mut Vec<usize>) -> String {
         let claimed = self.plugins.iter().position(|p| p.claims(lang));
         if claimed.is_none()
             && let Some(html) = self.highlight(lang, src)
@@ -162,7 +191,9 @@ impl Renderer {
                     used.push(i);
                 }
                 let name = escape(&self.plugins[i].name);
-                format!("<pre class=\"tmdview-plugin\" data-plugin=\"{name}\"{label}><code>{}</code></pre>\n", escape(src))
+                // The rest of the info string, like `{fill=1}`, for plugins that take options.
+                let info = if info.is_empty() { String::new() } else { format!(" data-info=\"{}\"", escape(info)) };
+                format!("<pre class=\"tmdview-plugin\" data-plugin=\"{name}\"{label}{info}><code>{}</code></pre>\n", escape(src))
             }
             None => format!("<pre{label}><code>{}</code></pre>\n", escape(src)),
         }
@@ -189,6 +220,120 @@ fn syntect_css() -> anyhow::Result<String> {
         scope_css(&dark, ":root:not([data-theme=\"light\"])"),
         scope_css(&dark, ":root[data-theme=\"dark\"]"),
     ))
+}
+
+/// A heading's trailing `{#id .class key=value key="a value"}`.
+struct HeadingAttrs {
+    id: Option<String>,
+    classes: Vec<String>,
+    attrs: Vec<(String, Option<String>)>,
+}
+
+impl HeadingAttrs {
+    /// `key=value` pairs become `data-key` attributes, so they can't clash with the
+    /// heading's `id` or give it a `title` tooltip. Plugins read them from `dataset`.
+    fn into_tag(self, level: pulldown_cmark::HeadingLevel, id: Option<CowStr>) -> Tag {
+        Tag::Heading {
+            level,
+            id: self.id.map(CowStr::from).or(id),
+            classes: self.classes.into_iter().map(CowStr::from).collect(),
+            attrs: self.attrs.into_iter().map(|(k, v)| (format!("data-{k}").into(), v.map(CowStr::from))).collect(),
+        }
+    }
+}
+
+/// Read the attributes at the end of a heading's first source line. pulldown-cmark
+/// finds them but doesn't understand quoted values, so `{title="Mapa de planta"}`
+/// would come apart at the spaces.
+fn heading_attrs(source: &str) -> Option<HeadingAttrs> {
+    let line = source.lines().next()?.trim_end().trim_end_matches('#').trim_end();
+    let inner = line.strip_suffix('}')?;
+    let inner = &inner[inner.rfind('{')? + 1..];
+    let mut parsed = HeadingAttrs { id: None, classes: Vec::new(), attrs: Vec::new() };
+    let mut rest = inner.trim_start();
+    while !rest.is_empty() {
+        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        if let Some(id) = rest.strip_prefix('#') {
+            parsed.id = Some(id[..end - 1].to_string());
+            rest = &rest[end..];
+        } else if let Some(class) = rest.strip_prefix('.') {
+            parsed.classes.push(class[..end - 1].to_string());
+            rest = &rest[end..];
+        } else {
+            let key_end = rest.find(|c: char| c == '=' || c.is_whitespace()).unwrap_or(rest.len());
+            let key = &rest[..key_end];
+            if key.is_empty() || !key.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+                return None;
+            }
+            rest = &rest[key_end..];
+            let value = match rest.strip_prefix('=') {
+                None => None,
+                Some(after) => {
+                    let (value, len) = match after.chars().next() {
+                        Some(q @ ('"' | '\'')) => {
+                            let close = after[1..].find(q)?;
+                            (&after[1..close + 1], close + 2)
+                        }
+                        _ => {
+                            let len = after.find(char::is_whitespace).unwrap_or(after.len());
+                            (&after[..len], len)
+                        }
+                    };
+                    rest = &after[len..];
+                    Some(value.to_string())
+                }
+            };
+            parsed.attrs.push((key.to_string(), value));
+        }
+        rest = rest.trim_start();
+    }
+    Some(parsed)
+}
+
+/// A rendered page body, the indexes of the plugins that claimed a block in it, and its front matter.
+struct Body {
+    html: String,
+    used: Vec<usize>,
+    front_matter: Option<FrontMatter>,
+}
+
+/// A `---` YAML or `+++` TOML block at the top of the file.
+struct FrontMatter {
+    kind: MetadataBlockKind,
+    source: String,
+}
+
+impl FrontMatter {
+    /// The block as JSON in the page, for plugins: `{"format": "yaml", "source": "…"}`.
+    fn script(&self) -> String {
+        let format = match self.kind {
+            MetadataBlockKind::YamlStyle => "yaml",
+            MetadataBlockKind::PlusesStyle => "toml",
+        };
+        let json = serde_json::json!({ "format": format, "source": self.source }).to_string();
+        // `<` can't appear raw, so nothing in the block can close the script tag.
+        let json = json.replace('<', "\\u003c");
+        format!("<script type=\"application/json\" id=\"tmdview-front-matter\">{json}</script>\n")
+    }
+
+    /// The top-level keys, which decide the plugins a page gets. YAML keys are read from
+    /// the lines that start a `key:` at the left margin, which is all this needs, with no
+    /// YAML parser. TOML is parsed, since the toml crate is already here.
+    fn keys(&self) -> Vec<String> {
+        match self.kind {
+            MetadataBlockKind::YamlStyle => self
+                .source
+                .lines()
+                .filter(|line| !line.starts_with([' ', '\t', '#', '-']))
+                .filter_map(|line| line.split_once(':'))
+                .map(|(key, _)| key.trim().trim_matches(['"', '\'']).to_string())
+                .filter(|key| !key.is_empty())
+                .collect(),
+            MetadataBlockKind::PlusesStyle => {
+                toml::from_str::<toml::Table>(&self.source).map(|t| t.keys().cloned().collect()).unwrap_or_default()
+            }
+        }
+    }
 }
 
 fn label(lang: &str) -> String {
@@ -286,7 +431,7 @@ mod tests {
     use super::*;
 
     fn body(md: &str) -> String {
-        Renderer::new(Vec::new(), None).unwrap().render_body(md).0
+        Renderer::new(Vec::new(), None).unwrap().render_body(md).html
     }
 
     #[test]
@@ -317,7 +462,7 @@ mod tests {
     #[test]
     fn claimed_languages_beat_syntect_and_fallback_only_takes_the_rest() {
         let renderer = Renderer::new(vec![plugin("hl", &["python"], true)], None).unwrap();
-        let html = renderer.render_body("```python\nx\n```\n\n```rust\nfn f() {}\n```\n\n```zig\nx\n```\n\n```\nx\n```\n").0;
+        let html = renderer.render_body("```python\nx\n```\n\n```rust\nfn f() {}\n```\n\n```zig\nx\n```\n\n```\nx\n```\n").html;
         assert!(html.contains(r#"data-plugin="hl" data-lang="python""#), "{html}");
         assert!(html.contains(r#"class="hl-code" data-lang="rust""#), "{html}");
         assert!(html.contains(r#"data-plugin="hl" data-lang="zig""#), "{html}");
@@ -329,6 +474,7 @@ mod tests {
             name: name.into(),
             languages: languages.iter().map(|l| l.to_string()).collect(),
             fallback,
+            front_matter_keys: Vec::new(),
             scripts: vec![format!("/* {name} script */")],
             styles: vec![format!("/* {name} style */")],
         }
@@ -367,11 +513,51 @@ mod tests {
     }
 
     #[test]
+    fn heading_attributes_take_quoted_values_and_become_data_attributes() {
+        let html = body("# Mapa de planta {id=\"A1\" crumb='Anexo' title=\"Mapa de planta\" ref=mapa}\n\n## Two {#two .wide open}\n");
+        assert!(
+            html.contains(r#"<h1 id="mapa-de-planta" data-id="A1" data-crumb="Anexo" data-title="Mapa de planta" data-ref="mapa">Mapa de planta</h1>"#),
+            "{html}"
+        );
+        assert!(html.contains(r#"<h2 id="two" class="wide" data-open="">Two</h2>"#), "{html}");
+        assert!(body("# Plain {not attrs\n").contains("<h1 id=\"plain-not-attrs\">Plain {not attrs</h1>"));
+    }
+
+    #[test]
     fn front_matter_is_left_out() {
         let html = body("---\ntitle: Spec\nmeta:\n  a: 1\n---\n\n# Hi\n");
         assert_eq!(html, "<h1 id=\"hi\">Hi</h1>\n");
         let html = body("+++\ntitle = \"Spec\"\n+++\n\nText\n");
         assert_eq!(html, "<p>Text</p>\n");
+    }
+
+    #[test]
+    fn front_matter_reaches_the_page_and_the_plugins_that_want_it() {
+        let mut mts = plugin("mts", &[], false);
+        mts.front_matter_keys = vec!["eyebrow".into()];
+        let renderer = Renderer::new(vec![mts, plugin("other", &[], false)], None).unwrap();
+        let md = "---\ntitle: A </script> B\neyebrow: Spec\nmeta:\n  eyebrow: nested\n---\n\n# Hi\n";
+        let page = renderer.render(md, "t", Path::new("/"), "auto");
+        let script = r#"<script type="application/json" id="tmdview-front-matter">{"format":"yaml","source":"title: A \u003c/script> B\neyebrow: Spec"#;
+        assert!(page.contains(script), "{page}");
+        assert_eq!(page.matches("/* mts script */").count(), 1);
+        assert!(!page.contains("other script"));
+        assert!(!renderer.render("# Hi\n", "t", Path::new("/"), "auto").contains("mts script"), "no front matter, no plugin");
+    }
+
+    #[test]
+    fn front_matter_keys_are_the_top_level_ones() {
+        let yaml = FrontMatter { kind: MetadataBlockKind::YamlStyle, source: "title: x\nmeta:\n  Linear: y\n# note: z\n- item\n\"quoted\": 1\nstyle: |\n  .a { b: c }\n".into() };
+        assert_eq!(yaml.keys(), ["title", "meta", "quoted", "style"]);
+        let toml = FrontMatter { kind: MetadataBlockKind::PlusesStyle, source: "title = \"x\"\n[meta]\na = 1\n".into() };
+        assert_eq!(toml.keys(), ["meta", "title"]);
+    }
+
+    #[test]
+    fn plugin_blocks_keep_the_rest_of_the_info_string() {
+        let renderer = Renderer::new(vec![plugin("mts", &["kpi"], false)], None).unwrap();
+        let html = renderer.render_body("```kpi {fill=1,3}\n| a | 1 |\n```\n").html;
+        assert!(html.contains(r#"data-plugin="mts" data-lang="kpi" data-info="{fill=1,3}">"#), "{html}");
     }
 
     #[test]

@@ -54,6 +54,8 @@ pub struct Loaded {
     pub languages: Vec<String>,
     /// Also takes blocks whose language nothing else handles.
     pub fallback: bool,
+    /// Also runs on pages whose front matter has any of these top-level keys.
+    pub front_matter_keys: Vec<String>,
     pub scripts: Vec<String>,
     pub styles: Vec<String>,
 }
@@ -61,6 +63,11 @@ pub struct Loaded {
 impl Loaded {
     pub fn claims(&self, lang: &str) -> bool {
         self.languages.iter().any(|l| l == lang)
+    }
+
+    /// Whether a page with front matter keys `keys` needs this plugin.
+    pub fn wants_front_matter(&self, keys: &[String]) -> bool {
+        self.front_matter_keys.iter().any(|k| keys.contains(k))
     }
 
     /// The `<style>` and `<script>` tags added to a page that uses this plugin.
@@ -266,6 +273,7 @@ mod tests {
             name: name.into(),
             languages: langs.iter().map(|l| l.to_string()).collect(),
             fallback,
+            front_matter_keys: Vec::new(),
             scripts: Vec::new(),
             styles: Vec::new(),
         };

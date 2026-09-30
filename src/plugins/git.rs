@@ -26,6 +26,8 @@ struct Manifest {
     #[serde(default)]
     fallback: bool,
     #[serde(default)]
+    front_matter_keys: Vec<String>,
+    #[serde(default)]
     scripts: Vec<String>,
     #[serde(default)]
     styles: Vec<String>,
@@ -186,8 +188,11 @@ fn read_manifest(repo: &Path) -> Result<Manifest> {
     if Builtin::named(&manifest.name).is_some() {
         bail!("{MANIFEST}: {} is a built-in plugin's name", manifest.name);
     }
-    if manifest.languages.is_empty() && !manifest.fallback {
-        bail!("{MANIFEST}: set `languages`, `fallback = true`, or both");
+    if manifest.languages.is_empty() && !manifest.fallback && manifest.front_matter_keys.is_empty() {
+        bail!("{MANIFEST}: set `languages`, `fallback = true` or `front_matter_keys`");
+    }
+    if let Some(key) = manifest.front_matter_keys.iter().find(|k| k.is_empty() || k.contains(char::is_whitespace)) {
+        bail!("{MANIFEST}: {key:?} isn't a front matter key");
     }
     if let Some(lang) = manifest.languages.iter().find(|l| l.is_empty() || l.contains(char::is_whitespace)) {
         bail!("{MANIFEST}: {lang:?} isn't a code block language");
@@ -209,6 +214,7 @@ fn load_repo(repo: &Path, manifest: Manifest) -> Result<Loaded> {
         name: manifest.name,
         languages: manifest.languages,
         fallback: manifest.fallback,
+        front_matter_keys: manifest.front_matter_keys,
     })
 }
 
@@ -230,6 +236,9 @@ fn summarize(manifest: &Manifest, url: &str, commit: &str) -> String {
     let mut claims: Vec<String> = manifest.languages.iter().map(|l| format!("```{l}")).collect();
     if manifest.fallback {
         claims.push("any language nothing else handles".into());
+    }
+    if !manifest.front_matter_keys.is_empty() {
+        claims.push(format!("pages whose front matter has {}", manifest.front_matter_keys.join(", ")));
     }
     let mut out = format!("{} {} from {url} @ {commit}\n", manifest.name, manifest.version);
     if let Some(description) = &manifest.description {

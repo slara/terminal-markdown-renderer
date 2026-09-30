@@ -80,6 +80,7 @@ impl Builtin {
             name: spec.name.into(),
             languages: spec.languages.iter().map(|l| l.to_string()).collect(),
             fallback: false,
+            front_matter_keys: Vec::new(),
             scripts: Vec::new(),
             styles: Vec::new(),
         }

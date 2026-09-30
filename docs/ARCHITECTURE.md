@@ -53,10 +53,10 @@ The data folder comes from the `dirs` crate.
 | Kind | Where it comes from | Example |
 |---|---|---|
 | Built-in | A pinned download described in `builtin.rs` | `mermaid` |
-| Git | Any git repository with a `tmdview-plugin.toml` manifest | `slara/tmdview-highlight` |
+| Git | Any git repository with a `tmdview-plugin.toml` manifest | `slara/tmdview-highlight`, `slara/tmdview-mts` |
 
 Neither is kept in this repo, so `cargo install --git` stays small.
-Either way, a plugin becomes a `Loaded` value: its name, the languages it claims, whether it's the fallback, and its files' contents.
+Either way, a plugin becomes a `Loaded` value: its name, the languages it claims, whether it's the fallback, the front matter keys it runs on, and its files' contents.
 [PLUGINS.md](PLUGINS.md) is the guide for plugin authors.
 
 ### Built-in plugins
@@ -108,7 +108,11 @@ For each fenced code block, the renderer takes the first of these that applies:
 3. The fallback plugin, if the block has a language.
 4. Plain escaped text.
 
-A claimed block becomes `<pre class="tmdview-plugin" data-plugin="<name>" data-lang="<lang>"><code>…</code></pre>`.
+A claimed block becomes `<pre class="tmdview-plugin" data-plugin="<name>" data-lang="<lang>"><code>…</code></pre>`, plus `data-info` with the rest of the fence's info string, if there is any.
+
+A page with front matter gets it as JSON in `<script type="application/json" id="tmdview-front-matter">`, just before the plugins' files.
+The renderer also adds each plugin whose `front_matter_keys` includes one of the front matter's top-level keys.
+For YAML it finds those keys by reading the lines that start with `key:` at the left margin, so tmdview needs no YAML parser. TOML is parsed with the `toml` crate.
 The renderer only adds a plugin's files when the page has at least one block the plugin claimed, so pages without diagrams stay small even with Mermaid installed.
 Before inlining, it rewrites `</script` as `<\/script` in scripts, and `</style` as `<\/style` in styles, so a file can't close its own tag.
 A script that contains both `<!--` and `<script` could still put the HTML parser in its "double-escaped" state, where even the real `</script>` doesn't end the tag and the rest of the page is swallowed.
@@ -131,9 +135,13 @@ tmdview changes four kinds of events before turning the stream into HTML:
 | Event | What tmdview does |
 |---|---|
 | Code block | Collects the code, then colors it with [syntect](https://github.com/trishume/syntect). Unknown languages are shown plain and escaped. |
-| Heading | Turns the heading's text into an ID, so `## How it works` gets `id="how-it-works"`. Repeats get `-1`, `-2` and so on. |
+| Heading | Turns the heading's text into an ID, so `## How it works` gets `id="how-it-works"`. Repeats get `-1`, `-2` and so on. Reads trailing `{…}` attributes itself (see below). |
 | Table cell | Wraps a cell with no spaces, like `D-01` or a date, in `<span class="nowrap">`, so a narrow column doesn't break it after a hyphen. |
 | Math | Wraps `$...$` in `<span class="math">` and `$$...$$` in `<div class="math">`, without typesetting. |
+
+pulldown-cmark finds a heading's trailing `{#id .class key=value}`, but it doesn't understand quoted values, so `{title="Mapa de planta"}` would come apart at the spaces.
+tmdview reads that part of the heading's source line again, with quotes.
+Each `key=value` becomes `data-key`, so it can't clash with the heading's `id` or add a `title` tooltip.
 
 The parser also recognizes front matter, a `---` YAML or `+++` TOML block at the top of the file, and the HTML writer leaves it out.
 Without that, the block would show up as a line, a paragraph and a heading.
@@ -318,11 +326,12 @@ It restores on the `load` event, after images have loaded, so the page is tall e
 
 ## Tests
 
-`cargo test` runs 28 tests. They cover:
+`cargo test` runs 32 tests. They cover:
 
 - heading IDs, including duplicates and custom `{#id}`s
 - syntax colors, and plain output for unknown languages
 - tables, task lists and strikethrough, front matter, and table cells kept on one line
+- heading attributes with quoted values, front matter in the page and its keys, and the plugins it adds, `data-info` on plugin blocks
 - percent-encoding and decoding of file paths
 - plugins: claimed blocks, files added once, pages without claimed blocks left alone, and the claim order (claimed language, syntect, fallback, plain)
 - conflicts between plugins, escaping `</script` in inlined files, the `data:` URL for risky scripts, and base64

@@ -1,6 +1,6 @@
 [package]
 name = "tmdview"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "View a Markdown file rendered as HTML in a browser inside your terminal (via terminal-browser)"
 authors = ["Sebastian Lara Menares"]

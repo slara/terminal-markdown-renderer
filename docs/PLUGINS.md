@@ -1,10 +1,10 @@
 # Writing a plugin
 
 A tmdview plugin is a git repository with a manifest and some JavaScript or CSS.
-tmdview inlines those files into every page that has a code block the plugin takes over.
-Use it for a diagram type, a notation or a code language tmdview doesn't handle.
+tmdview inlines those files into every page that has a code block the plugin takes over, or front matter it asks for.
+Use it for a diagram type, a notation, a code language tmdview doesn't handle, or a whole document dialect.
 
-[tmdview-highlight](https://github.com/slara/tmdview-highlight) is a complete example.
+[tmdview-highlight](https://github.com/slara/tmdview-highlight) is a complete example of a code block plugin.
 
 ## Layout
 
@@ -27,12 +27,13 @@ description = "Draws ```d2 blocks"           # optional, shown before install
 
 languages = ["d2"]                           # code block languages to take over
 fallback = false                             # also take blocks nothing else handles
+front_matter_keys = []                       # also run on pages whose front matter has one of these keys
 
 styles = ["styles.css"]                      # inlined in <style> tags, in order
 scripts = ["vendor/d2.min.js", "init.js"]    # inlined in <script> tags, in order
 ```
 
-- Set `languages`, `fallback = true`, or both.
+- Set at least one of `languages`, `fallback = true` and `front_matter_keys`.
 - List at least one file in `scripts` or `styles`. Paths are relative to the repository and must stay inside it.
 - A plugin can't use a built-in plugin's name (`mermaid`).
 - Unknown keys are an error, so a typo doesn't go unnoticed.
@@ -58,6 +59,7 @@ Each block the plugin takes over becomes:
 ```
 
 Read the source with `code.textContent`.
+If the fence has more after the language, like ` ```kpi {fill=1} `, the rest is in `data-info="{fill=1}"`.
 The plugin's styles and scripts go at the end of `<body>`, after every block, so `init.js` can run straight away:
 
 ```js
@@ -72,6 +74,34 @@ The plugin's styles and scripts go at the end of `<body>`, after every block, so
 
 If drawing finishes later, pass its promise to `tmdview.ready(promise)`.
 When tmdview reloads the page after a save, it waits for those promises before it restores your scroll position, since drawing changes the page height.
+
+## Front matter
+
+A page can start with front matter: a `---` YAML block or a `+++` TOML block.
+tmdview leaves it out of the page, and puts it in a script tag for plugins instead:
+
+```html
+<script type="application/json" id="tmdview-front-matter">{"format":"yaml","source":"title: Plan\nmeta:\n  Estado: propuesto"}</script>
+```
+
+`source` is the block's text, not parsed, so a plugin brings its own YAML parser if it needs one.
+The tag comes before every plugin's files, so a script can read it straight away:
+
+```js
+const tag = document.getElementById("tmdview-front-matter");
+const front = tag && JSON.parse(tag.textContent);   // { format: "yaml" | "toml", source: "…" }
+```
+
+List keys in `front_matter_keys` to run on pages that don't have your code blocks.
+tmdview adds the plugin to any page whose front matter has at least one of those keys at the top level.
+Pick keys that are specific to your documents, since a common key like `title` would add the plugin to most pages with front matter.
+
+## Heading attributes
+
+A heading can end with attributes, like `# Mapa de planta {#mapa .wide crumb="Anexo" ref=mapa}`.
+`#id` sets the heading's `id` and `.class` adds a class.
+Every `key=value` becomes a `data-key` attribute, so a plugin reads it from `heading.dataset.key`.
+Values can be quoted with `"` or `'` to hold spaces.
 
 ## Light and dark themes
 
