@@ -853,6 +853,7 @@ dependencies = [
  "anyhow",
  "clap",
  "dirs",
+ "libc",
  "notify",
  "pulldown-cmark",
  "serde",

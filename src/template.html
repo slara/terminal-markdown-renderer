@@ -15,6 +15,7 @@
   --link: #0969da;
   --mark: #fff8c5;
   --quote: #59636e;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -50,7 +51,7 @@ body {
   color: var(--fg);
   font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
 }
-main { max-width: 860px; margin: 0 auto; padding: 32px 16px 64px; overflow-wrap: break-word; }
+main { max-width: 860px; margin: 0 auto; padding: 32px clamp(16px, 6vw, 56px) 64px; overflow-wrap: break-word; }
 main > :first-child { margin-top: 0; }
 
 h1, h2, h3, h4, h5, h6 { margin: 1.5em 0 .6em; font-weight: 600; line-height: 1.25; }
@@ -77,7 +78,7 @@ ul:has(> li > input[type="checkbox"]) { list-style: none; }
 blockquote { padding: 0 1em; color: var(--quote); border-left: .25em solid var(--border); }
 
 code, pre, kbd {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--mono);
   font-size: 85%;
 }
 :not(pre) > code { padding: .2em .4em; background: var(--subtle-bg); border-radius: 6px; }
@@ -107,8 +108,8 @@ tr:nth-child(2n) td { background: var(--subtle-bg); }
 .math { font-family: "Latin Modern Math", "STIX Two Math", serif; }
 .math-display { text-align: center; margin: 1em 0; overflow-x: auto; }
 
-/* Syntax highlighting (syntect). The pre keeps our own background/border. */
-{{highlight_css}}
+/* Code colors: syntect's, or the terminal theme's whole look. The pre keeps our own background/border. */
+{{theme_css}}
 pre.hl-code { background: var(--subtle-bg) !important; }
 </style>
 </head>

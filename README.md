@@ -27,6 +27,7 @@ tmdview notes.md                      # the browser takes over this pane
 tmdview notes.md -s right             # open beside this pane
 tmdview notes.md -s down --size 0.4   # a smaller pane below
 tmdview notes.md -t dark              # force the dark theme
+tmdview notes.md -t terminal          # match the terminal's colors and font
 tmdview notes.md --no-open -o out.html  # only write the HTML file
 tmdview plugins install mermaid       # draw ```mermaid blocks as diagrams from now on
 ```
@@ -37,7 +38,7 @@ tmdview plugins install mermaid       # draw ```mermaid blocks as diagrams from 
 | `--size <f>` | Share of the space the new pane takes, from 0.2 to 0.95 |
 | `--no-watch` | Don't reload the page when you save the file |
 | `--poll` | Check the file by polling, for network drives and other filesystems that don't report changes |
-| `-t, --theme <t>` | `auto` (default, follows the system), `light` or `dark` |
+| `-t, --theme <t>` | `auto` (default, follows the system), `light`, `dark` or `terminal` (see below) |
 | `-o, --output <path>` | Write the HTML here instead of a temp file |
 | `--no-open` | Write the HTML and print its path, without opening a browser |
 | `--no-plugins` | Don't use installed plugins for this run |
@@ -54,6 +55,16 @@ tmdview plugins install mermaid       # draw ```mermaid blocks as diagrams from 
 - Relative links and images, resolved from the Markdown file's folder
 
 Math is recognized but shown as plain text, not typeset.
+
+## Matching your terminal
+
+`--theme terminal` makes the page look like part of the terminal: its background, text color and ANSI colors, with code colored from the same palette.
+tmdview asks the terminal for its colors when it starts, so this works in most modern terminals.
+Anything the terminal doesn't answer comes from Ghostty's config, when you run tmdview in Ghostty.
+
+The page uses a monospace font for all its text.
+In Ghostty it's your terminal font, read from `ghostty +show-config`. Other terminals can't report their font, so the page uses the system monospace font.
+If you change your terminal's theme, run tmdview again to pick it up.
 
 ## Plugins
 

@@ -1,7 +1,7 @@
 # Architecture
 
 This page explains how tmdview works, for anyone reading or changing the code.
-The whole program is about 1,800 lines of Rust in eight files.
+The whole program is about 2,100 lines of Rust in nine files.
 
 ## What happens when you run it
 
@@ -35,6 +35,7 @@ flowchart LR
 | `src/watch.rs` | File change events with a polling fallback, and the loop that rebuilds and reloads |
 | `src/render.rs` | Markdown to a full HTML page, syntax colors, heading IDs, file URLs |
 | `src/template.html` | Page layout, CSS for both themes, the script that keeps your scroll position |
+| `src/terminal.rs` | `--theme terminal`: asks the terminal for its colors, reads Ghostty's config, builds the matching CSS |
 | `src/browser.rs` | Runs the `terminal-browser` command and reads its JSON output |
 | `src/plugins/mod.rs` | The `plugins` subcommand, loading installed plugins, conflict checks, inlining their files |
 | `src/plugins/builtin.rs` | Built-in plugins: pinned downloads with checksums, and their start-up scripts |
@@ -146,6 +147,23 @@ The page has 2 sets of code colors:
 
 The dark rules sit under `:root[data-theme="dark"]` and under a `prefers-color-scheme: dark` media query.
 `--theme light` or `--theme dark` sets `data-theme` on the `<html>` tag, which overrides the system setting.
+
+### The terminal theme
+
+`--theme terminal` reads the look of the terminal tmdview runs in, in `terminal.rs`:
+
+1. It opens `/dev/tty`, turns off echo and line buffering, and sends OSC 10, 11 and 4 queries for the foreground, background and ANSI colors 0 to 15.
+2. It ends the queries with a device attributes request (`ESC [ c`), which every terminal answers. Once that answer arrives, there's nothing more to wait for, so a terminal that ignores the color queries costs one round trip. It gives up after 500 ms.
+3. Any color still missing, and the font, come from `ghostty +show-config` when running in Ghostty. Missing ANSI colors fall back to xterm's.
+4. If there's still no background and foreground, tmdview says so and uses the `auto` theme.
+
+The page gets `data-theme="dark"` or `"light"`, from whether the background is darker than the text, so plugins pick the matching theme.
+The terminal CSS takes the place of syntect's code colors, after the page's own CSS, so tmdview doesn't build syntect's CSS at all.
+It sets the page's color variables, plus one per ANSI color, and the rest of it is fixed CSS in terms of those variables.
+It maps code scopes (comments, strings, keywords and so on) to the ANSI colors, and sets all text in the terminal font at 14px with smaller headings, since monospace runs wide.
+On a dark background it uses the bright variants, which usually read better.
+
+The background watcher has no terminal to ask, so tmdview passes the colors it found to it as JSON, in the hidden `--terminal-style` flag.
 
 ### Relative links and images
 
@@ -290,12 +308,13 @@ It restores on the `load` event, after images have loaded, so the page is tall e
 - Math is shown as plain text.
 - Mermaid blocks are shown as code unless the `mermaid` plugin is installed.
 - A Mermaid page doesn't redraw if the system theme changes while it's open. It picks up the change on the next reload.
+- The terminal theme can't read the font outside Ghostty, and doesn't follow a theme change until you run tmdview again.
 - The default mode (browser takes over the pane) has only been tested by hand.
 - The whole tool has only been tried on macOS. On Linux, only the tests have run, in a Docker container, including the file-event tests with inotify.
 
 ## Tests
 
-`cargo test` runs 21 tests. They cover:
+`cargo test` runs 26 tests. They cover:
 
 - heading IDs, including duplicates and custom `{#id}`s
 - syntax colors, and plain output for unknown languages
@@ -305,6 +324,7 @@ It restores on the `load` event, after images have loaded, so the page is tall e
 - conflicts between plugins, escaping `</script` in inlined files, the `data:` URL for risky scripts, and base64
 - git plugins: GitHub shorthand, plugin names, and manifest files that try to leave the repository
 - parsing the background watcher's `--attach` list
+- the terminal theme: color formats, terminal replies, Ghostty's config, the CSS, and the JSON sent to the watcher
 - watching, with real files, for both file events and polling: a plain write, a rename-over save, a write after it, and nothing for reading the file or changing another file in the folder
 
 Downloading and cloning plugins have no automated tests, since they need the network or a git repository.

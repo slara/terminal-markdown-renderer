@@ -16,21 +16,20 @@ const CLASS_STYLE: ClassStyle = ClassStyle::SpacedPrefixed { prefix: "hl-" };
 
 pub struct Renderer {
     syntaxes: SyntaxSet,
-    highlight_css: String,
+    /// Code colors, or the whole look for `--theme terminal`.
+    theme_css: String,
     plugins: Vec<Loaded>,
 }
 
 impl Renderer {
-    pub fn new(plugins: Vec<Loaded>) -> anyhow::Result<Self> {
-        let themes = ThemeSet::load_defaults();
-        let light = css_for_theme_with_class_style(&themes.themes["InspiredGitHub"], CLASS_STYLE)?;
-        let dark = css_for_theme_with_class_style(&themes.themes["base16-ocean.dark"], CLASS_STYLE)?;
-        let highlight_css = format!(
-            "{light}\n@media (prefers-color-scheme: dark) {{\n{}\n}}\n{}\n",
-            scope_css(&dark, ":root:not([data-theme=\"light\"])"),
-            scope_css(&dark, ":root[data-theme=\"dark\"]"),
-        );
-        Ok(Self { syntaxes: SyntaxSet::load_defaults_newlines(), highlight_css, plugins })
+    /// `theme_css`, from `--theme terminal`, replaces syntect's code colors and
+    /// overrides the page's colors and fonts.
+    pub fn new(plugins: Vec<Loaded>, theme_css: Option<String>) -> anyhow::Result<Self> {
+        let theme_css = match theme_css {
+            Some(css) => css,
+            None => syntect_css()?,
+        };
+        Ok(Self { syntaxes: SyntaxSet::load_defaults_newlines(), theme_css, plugins })
     }
 
     /// Render `markdown` into a full HTML page. `base_dir` is used so relative
@@ -48,7 +47,7 @@ impl Renderer {
             .replace("{{theme_attr}}", &theme_attr)
             .replace("{{title}}", &escape(title))
             .replace("{{base}}", &escape(&base))
-            .replace("{{highlight_css}}", &self.highlight_css)
+            .replace("{{theme_css}}", &self.theme_css)
             .replace("{{body}}", &body);
         for &i in &used {
             page.push_str(&self.plugins[i].assets());
@@ -167,6 +166,18 @@ impl Renderer {
     }
 }
 
+/// syntect's code colors for both themes: light by default, dark when the page is dark.
+fn syntect_css() -> anyhow::Result<String> {
+    let themes = ThemeSet::load_defaults();
+    let light = css_for_theme_with_class_style(&themes.themes["InspiredGitHub"], CLASS_STYLE)?;
+    let dark = css_for_theme_with_class_style(&themes.themes["base16-ocean.dark"], CLASS_STYLE)?;
+    Ok(format!(
+        "{light}\n@media (prefers-color-scheme: dark) {{\n{}\n}}\n{}\n",
+        scope_css(&dark, ":root:not([data-theme=\"light\"])"),
+        scope_css(&dark, ":root[data-theme=\"dark\"]"),
+    ))
+}
+
 fn label(lang: &str) -> String {
     if lang.is_empty() { String::new() } else { format!(" data-lang=\"{}\"", escape(lang)) }
 }
@@ -248,7 +259,7 @@ mod tests {
     use super::*;
 
     fn body(md: &str) -> String {
-        Renderer::new(Vec::new()).unwrap().render_body(md).0
+        Renderer::new(Vec::new(), None).unwrap().render_body(md).0
     }
 
     #[test]
@@ -259,7 +270,7 @@ mod tests {
 
     #[test]
     fn plugin_claims_blocks_and_adds_its_assets_once() {
-        let renderer = Renderer::new(vec![plugin("mermaid", &["mermaid"], false)]).unwrap();
+        let renderer = Renderer::new(vec![plugin("mermaid", &["mermaid"], false)], None).unwrap();
         let md = "```mermaid\ngraph LR; a-->b\n```\n\n```mermaid\ngraph TD; c-->d\n```\n";
         let page = renderer.render(md, "t", Path::new("/"), "auto");
         let block = r#"<pre class="tmdview-plugin" data-plugin="mermaid" data-lang="mermaid"><code>graph LR; a--&gt;b"#;
@@ -271,14 +282,14 @@ mod tests {
 
     #[test]
     fn plugins_skip_pages_without_their_blocks() {
-        let renderer = Renderer::new(vec![plugin("mermaid", &["mermaid"], false)]).unwrap();
+        let renderer = Renderer::new(vec![plugin("mermaid", &["mermaid"], false)], None).unwrap();
         let page = renderer.render("# Hi\n", "t", Path::new("/"), "auto");
         assert!(!page.contains("mermaid script"));
     }
 
     #[test]
     fn claimed_languages_beat_syntect_and_fallback_only_takes_the_rest() {
-        let renderer = Renderer::new(vec![plugin("hl", &["python"], true)]).unwrap();
+        let renderer = Renderer::new(vec![plugin("hl", &["python"], true)], None).unwrap();
         let html = renderer.render_body("```python\nx\n```\n\n```rust\nfn f() {}\n```\n\n```zig\nx\n```\n\n```\nx\n```\n").0;
         assert!(html.contains(r#"data-plugin="hl" data-lang="python""#), "{html}");
         assert!(html.contains(r#"class="hl-code" data-lang="rust""#), "{html}");

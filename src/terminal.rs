@@ -1,0 +1,365 @@
+//! The terminal's own look, for `--theme terminal`: its colors and, where the terminal
+//! tells us, its font.
+//!
+//! Colors come from asking the terminal itself (OSC 10, 11 and 4), which any modern
+//! terminal answers. Whatever it doesn't answer comes from Ghostty's config, when
+//! running in Ghostty. The font only comes from Ghostty's config, since terminals have
+//! no way to report it.
+
+use std::process::{Child, Command, Stdio};
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rgb(pub u8, pub u8, pub u8);
+
+impl Rgb {
+    fn hex(self) -> String {
+        format!("#{:02x}{:02x}{:02x}", self.0, self.1, self.2)
+    }
+
+    /// `self` moved `amount` (0 to 1) of the way towards `other`.
+    fn mix(self, other: Rgb, amount: f32) -> Rgb {
+        let m = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * amount).round() as u8;
+        Rgb(m(self.0, other.0), m(self.1, other.1), m(self.2, other.2))
+    }
+
+    /// Relative luminance, 0 (black) to 1 (white).
+    fn luminance(self) -> f32 {
+        let lin = |c: u8| {
+            let c = c as f32 / 255.0;
+            if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * lin(self.0) + 0.7152 * lin(self.1) + 0.0722 * lin(self.2)
+    }
+
+    /// `#rgb`, `#rrggbb`, or X11's `rgb:r/g/b` with 1 to 4 hex digits per channel.
+    fn parse(s: &str) -> Option<Rgb> {
+        let s = s.trim();
+        if let Some(hex) = s.strip_prefix('#') {
+            let v = |i: usize, n: usize| u8::from_str_radix(hex.get(i..i + n)?, 16).ok();
+            return match hex.len() {
+                6 => Some(Rgb(v(0, 2)?, v(2, 2)?, v(4, 2)?)),
+                3 => Some(Rgb(v(0, 1)? * 17, v(1, 1)? * 17, v(2, 1)? * 17)),
+                _ => None,
+            };
+        }
+        let mut channels = s.strip_prefix("rgb:")?.split('/').map(|c| {
+            let max = 16u32.checked_pow(u32::try_from(c.len()).ok().filter(|n| (1..=4).contains(n))?)? - 1;
+            Some((u32::from_str_radix(c, 16).ok()? * 255 / max) as u8)
+        });
+        let rgb = Rgb(channels.next()??, channels.next()??, channels.next()??);
+        channels.next().is_none().then_some(rgb)
+    }
+}
+
+/// What the page takes from the terminal. It travels to the background watcher as JSON
+/// on its command line, since the watcher has no terminal to ask.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Style {
+    pub bg: Rgb,
+    pub fg: Rgb,
+    /// ANSI colors 0 to 15.
+    pub palette: [Rgb; 16],
+    pub font: Option<String>,
+}
+
+/// Colors as reported, any of which may be missing.
+#[derive(Default)]
+struct Found {
+    bg: Option<Rgb>,
+    fg: Option<Rgb>,
+    palette: [Option<Rgb>; 16],
+    font: Option<String>,
+}
+
+impl Found {
+    fn fill_from(&mut self, other: Found) {
+        self.bg = self.bg.or(other.bg);
+        self.fg = self.fg.or(other.fg);
+        for (mine, theirs) in self.palette.iter_mut().zip(other.palette) {
+            *mine = mine.or(theirs);
+        }
+        self.font = self.font.take().or(other.font);
+    }
+}
+
+/// xterm's default ANSI colors, for any the terminal didn't report.
+const XTERM: [Rgb; 16] = [
+    Rgb(0x00, 0x00, 0x00), Rgb(0xcd, 0x00, 0x00), Rgb(0x00, 0xcd, 0x00), Rgb(0xcd, 0xcd, 0x00),
+    Rgb(0x00, 0x00, 0xee), Rgb(0xcd, 0x00, 0xcd), Rgb(0x00, 0xcd, 0xcd), Rgb(0xe5, 0xe5, 0xe5),
+    Rgb(0x7f, 0x7f, 0x7f), Rgb(0xff, 0x00, 0x00), Rgb(0x00, 0xff, 0x00), Rgb(0xff, 0xff, 0x00),
+    Rgb(0x5c, 0x5c, 0xff), Rgb(0xff, 0x00, 0xff), Rgb(0x00, 0xff, 0xff), Rgb(0xff, 0xff, 0xff),
+];
+
+/// The terminal's style, or `None` if neither the terminal nor its config gave a
+/// background and foreground.
+pub fn detect() -> Option<Style> {
+    // Started first so it runs while the terminal answers. It's always needed in Ghostty,
+    // since only the config has the font.
+    let ghostty = spawn_ghostty_config();
+    let mut found = query_tty().unwrap_or_default();
+    if let Some(config) = ghostty.and_then(|child| child.wait_with_output().ok()).filter(|out| out.status.success()) {
+        found.fill_from(parse_ghostty_config(&String::from_utf8_lossy(&config.stdout)));
+    }
+    Some(Style {
+        bg: found.bg?,
+        fg: found.fg?,
+        palette: std::array::from_fn(|i| found.palette[i].unwrap_or(XTERM[i])),
+        font: found.font,
+    })
+}
+
+impl Style {
+    fn is_dark(&self) -> bool {
+        self.bg.luminance() < self.fg.luminance()
+    }
+
+    /// The page theme that matches: `dark` or `light`.
+    pub fn scheme(&self) -> &'static str {
+        if self.is_dark() { "dark" } else { "light" }
+    }
+
+    /// CSS that overrides the page's colors and fonts, and colors code with the
+    /// terminal's ANSI colors, in place of syntect's code colors.
+    pub fn css(&self) -> String {
+        let (bg, fg, p) = (self.bg, self.fg, &self.palette);
+        // The bright variants usually read better on a dark background, the normal ones on a light one.
+        let dark = self.is_dark();
+        let ansi = |n: usize| if dark { p[n + 8] } else { p[n] }.hex();
+        let font = match &self.font {
+            Some(name) => format!("\"{}\", ", css_string(name)),
+            None => String::new(),
+        };
+        let (blue, yellow, muted) = (ansi(4), ansi(3), fg.mix(bg, 0.4).hex());
+        format!(
+            r#":root[data-theme] {{
+  --bg: {bg};
+  --fg: {fg};
+  --muted: {muted};
+  --border: {border};
+  --subtle-bg: {subtle};
+  --link: {blue};
+  --mark: {yellow}55;
+  --quote: {muted};
+  --red: {red};
+  --green: {green};
+  --yellow: {yellow};
+  --blue: {blue};
+  --magenta: {magenta};
+  --cyan: {cyan};
+  --font: {font}var(--mono);
+}}
+{CSS}"#,
+            bg = bg.hex(),
+            fg = fg.hex(),
+            border = fg.mix(bg, 0.75).hex(),
+            subtle = bg.mix(fg, 0.06).hex(),
+            red = ansi(1),
+            green = ansi(2),
+            magenta = ansi(5),
+            cyan = ansi(6),
+        )
+    }
+}
+
+/// The part of the terminal theme that doesn't depend on the terminal: the type and
+/// the code colors, all in terms of the variables above.
+const CSS: &str = r#"/* Monospace runs wide, so the text is smaller and the headings flatter than the default theme's. */
+body { font: 14px/1.5 var(--font); }
+code, pre, kbd { font-family: inherit; font-size: 100%; }
+h1 { font-size: 1.5em; }
+h2 { font-size: 1.25em; }
+h3 { font-size: 1.1em; }
+:not(pre) > code { color: var(--cyan); }
+.hl-comment, .hl-punctuation.hl-definition.hl-comment { color: var(--muted); font-style: italic; }
+.hl-string, .hl-markup.hl-inserted { color: var(--green); }
+.hl-constant, .hl-entity.hl-other.hl-attribute-name { color: var(--yellow); }
+.hl-keyword, .hl-storage { color: var(--magenta); }
+.hl-entity.hl-name.hl-function, .hl-support.hl-function, .hl-markup.hl-heading { color: var(--blue); }
+.hl-entity.hl-name, .hl-support.hl-type, .hl-support.hl-class, .hl-storage.hl-type, .hl-constant.hl-character.hl-escape { color: var(--cyan); }
+.hl-entity.hl-name.hl-tag, .hl-invalid, .hl-markup.hl-deleted { color: var(--red); }
+.hl-markup.hl-bold { font-weight: bold; }
+.hl-markup.hl-italic { font-style: italic; }
+"#;
+
+/// Keep a font name from ending the CSS string it goes in or the `<style>` tag, and from
+/// looking like one of the template's `{{placeholders}}`.
+fn css_string(s: &str) -> String {
+    s.chars().filter(|c| !matches!(c, '"' | '\\' | '<' | '>' | '{' | '}' | '\n' | '\r')).collect()
+}
+
+/// Ask the terminal for its colors. The query ends with a device attributes request,
+/// which every terminal answers, so a terminal that ignores the color queries costs
+/// one round trip, not a timeout.
+#[cfg(unix)]
+fn query_tty() -> Option<Found> {
+    use std::fs::OpenOptions;
+    use std::io::{Read, Write};
+    use std::os::fd::AsRawFd;
+    use std::time::{Duration, Instant};
+
+    let mut tty = OpenOptions::new().read(true).write(true).open("/dev/tty").ok()?;
+    let fd = tty.as_raw_fd();
+    // SAFETY: termios is plain data, and `fd` is an open terminal for as long as `tty` lives.
+    let saved = unsafe {
+        let mut t: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(fd, &mut t) != 0 {
+            return None;
+        }
+        t
+    };
+    let mut raw = saved;
+    raw.c_lflag &= !(libc::ICANON | libc::ECHO);
+    raw.c_cc[libc::VMIN] = 0;
+    raw.c_cc[libc::VTIME] = 1; // reads return after 0.1 s without input
+    // SAFETY: as above.
+    if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw) } != 0 {
+        return None;
+    }
+
+    let mut query = String::from("\x1b]10;?\x1b\\\x1b]11;?\x1b\\");
+    for i in 0..16 {
+        query.push_str(&format!("\x1b]4;{i};?\x1b\\"));
+    }
+    query.push_str("\x1b[c");
+    let mut reply = Vec::new();
+    if tty.write_all(query.as_bytes()).and_then(|()| tty.flush()).is_ok() {
+        let deadline = Instant::now() + Duration::from_millis(500);
+        let mut buf = [0u8; 1024];
+        while Instant::now() < deadline && !ends_with_device_attributes(&reply) {
+            match tty.read(&mut buf) {
+                Ok(n) => reply.extend_from_slice(&buf[..n]),
+                Err(_) => break,
+            }
+        }
+    }
+    // SAFETY: as above.
+    unsafe { libc::tcsetattr(fd, libc::TCSANOW, &saved) };
+    Some(parse_replies(&String::from_utf8_lossy(&reply)))
+}
+
+#[cfg(not(unix))]
+fn query_tty() -> Option<Found> {
+    None
+}
+
+/// Whether `reply` has the answer to `ESC [ c`, which is `ESC [ ? … c`.
+fn ends_with_device_attributes(reply: &[u8]) -> bool {
+    let Some(start) = reply.windows(3).rposition(|w| w == b"\x1b[?") else { return false };
+    reply[start + 3..].contains(&b'c')
+}
+
+/// Pull the colors out of the terminal's OSC replies, which end in `ESC \` or BEL.
+fn parse_replies(reply: &str) -> Found {
+    let mut found = Found::default();
+    for part in reply.split("\x1b]").skip(1) {
+        let part = part.split(['\x07', '\x1b']).next().unwrap_or("");
+        let mut fields = part.split(';');
+        match (fields.next(), fields.next(), fields.next()) {
+            (Some("10"), Some(color), None) => found.fg = Rgb::parse(color),
+            (Some("11"), Some(color), None) => found.bg = Rgb::parse(color),
+            (Some("4"), Some(index), Some(color)) => {
+                if let Some(slot) = index.parse::<usize>().ok().and_then(|i| found.palette.get_mut(i)) {
+                    *slot = Rgb::parse(color);
+                }
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
+/// Start printing Ghostty's effective config, when running in Ghostty.
+fn spawn_ghostty_config() -> Option<Child> {
+    let bin = match std::env::var_os("GHOSTTY_BIN_DIR") {
+        Some(dir) => std::path::Path::new(&dir).join("ghostty"),
+        None if std::env::var("TERM_PROGRAM").as_deref() == Ok("ghostty") => "ghostty".into(),
+        None => return None,
+    };
+    Command::new(bin).arg("+show-config").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()
+}
+
+fn parse_ghostty_config(config: &str) -> Found {
+    let mut found = Found::default();
+    for line in config.lines() {
+        let Some((key, value)) = line.split_once('=') else { continue };
+        let value = value.trim();
+        match key.trim() {
+            "background" => found.bg = Rgb::parse(value),
+            "foreground" => found.fg = Rgb::parse(value),
+            // The first one is the main font; later ones are fallbacks.
+            "font-family" if found.font.is_none() && !value.is_empty() => {
+                found.font = Some(value.trim_matches('"').to_string());
+            }
+            "palette" => {
+                if let Some((index, color)) = value.split_once('=')
+                    && let Some(slot) = index.trim().parse::<usize>().ok().and_then(|i| found.palette.get_mut(i))
+                {
+                    *slot = Rgb::parse(color);
+                }
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn colors_parse_in_every_form() {
+        assert_eq!(Rgb::parse("#222222"), Some(Rgb(0x22, 0x22, 0x22)));
+        assert_eq!(Rgb::parse("#fa0"), Some(Rgb(0xff, 0xaa, 0x00)));
+        assert_eq!(Rgb::parse("rgb:2222/c5c5/0000"), Some(Rgb(0x22, 0xc5, 0x00)));
+        assert_eq!(Rgb::parse("rgb:f/8/0"), Some(Rgb(0xff, 0x88, 0x00)));
+        assert_eq!(Rgb::parse("rgb:22/c5"), None);
+        assert_eq!(Rgb::parse("rgb:22222/0/0"), None);
+        assert_eq!(Rgb::parse("red"), None);
+    }
+
+    #[test]
+    fn terminal_replies_give_colors() {
+        let reply = "\x1b]10;rgb:c5c5/c8c8/c6c6\x1b\\\x1b]11;rgb:2222/2222/2222\x07\x1b]4;4;rgb:8585/bebe/fdfd\x1b\\\x1b[?62;22c";
+        let found = parse_replies(reply);
+        assert_eq!(found.fg, Some(Rgb(0xc5, 0xc8, 0xc6)));
+        assert_eq!(found.bg, Some(Rgb(0x22, 0x22, 0x22)));
+        assert_eq!(found.palette[4], Some(Rgb(0x85, 0xbe, 0xfd)));
+        assert_eq!(found.palette[0], None);
+        assert!(ends_with_device_attributes(reply.as_bytes()));
+        assert!(!ends_with_device_attributes(b"\x1b]11;rgb:0/0/0\x1b\\"));
+    }
+
+    #[test]
+    fn ghostty_config_gives_colors_and_the_first_font() {
+        let config = "font-family = MesloLGS Nerd Font Mono\nfont-family = Apple Color Emoji\nbackground = #222222\nforeground = #c5c8c6\npalette = 2=#87c38a\npalette = 200=#000000\n";
+        let found = parse_ghostty_config(config);
+        assert_eq!(found.font.as_deref(), Some("MesloLGS Nerd Font Mono"));
+        assert_eq!(found.bg, Some(Rgb(0x22, 0x22, 0x22)));
+        assert_eq!(found.palette[2], Some(Rgb(0x87, 0xc3, 0x8a)));
+    }
+
+    #[test]
+    fn css_uses_the_terminal_colors_and_a_safe_font_name() {
+        let style = Style {
+            bg: Rgb(0x22, 0x22, 0x22),
+            fg: Rgb(0xc5, 0xc8, 0xc6),
+            palette: XTERM,
+            font: Some("Evil\"</style>".into()),
+        };
+        assert!(style.is_dark());
+        let css = style.css();
+        assert!(css.contains("--bg: #222222;"), "{css}");
+        assert!(css.contains("--blue: #5c5cff;"), "bright blue on a dark background: {css}");
+        assert!(css.contains("--font: \"Evil/style\", var(--mono);"), "{css}");
+    }
+
+    #[test]
+    fn style_survives_the_trip_to_the_watcher() {
+        let style = Style { bg: Rgb(1, 2, 3), fg: Rgb(4, 5, 6), palette: XTERM, font: None };
+        let json = serde_json::to_string(&style).unwrap();
+        assert_eq!(serde_json::from_str::<Style>(&json).unwrap(), style);
+    }
+}

@@ -1,6 +1,7 @@
 mod browser;
 mod plugins;
 mod render;
+mod terminal;
 mod watch;
 
 use std::fs;
@@ -47,9 +48,15 @@ struct Cli {
     #[arg(long, hide = true, value_name = "TABS", value_delimiter = ',', num_args = 0..=1)]
     attach: Option<Vec<browser::Tab>>,
 
-    /// Color theme. `auto` follows the browser's preference.
+    /// Color theme. `auto` follows the browser's preference. `terminal` takes the
+    /// colors, and in Ghostty the font, from the terminal you run tmdview in.
     #[arg(short, long, value_enum, default_value_t = Theme::Auto)]
     theme: Theme,
+
+    /// Internal: the terminal's style as JSON, from the tmdview that started this
+    /// background watcher, which has no terminal to ask.
+    #[arg(long, hide = true, requires = "attach")]
+    terminal_style: Option<String>,
 
     /// Write the HTML here instead of a temp file.
     #[arg(short, long)]
@@ -86,6 +93,7 @@ enum Theme {
     Auto,
     Light,
     Dark,
+    Terminal,
 }
 
 impl Direction {
@@ -105,6 +113,8 @@ impl Theme {
             Theme::Auto => "auto",
             Theme::Light => "light",
             Theme::Dark => "dark",
+            // Resolved to dark or light from the terminal's colors before rendering.
+            Theme::Terminal => "auto",
         }
     }
 }
@@ -112,7 +122,8 @@ impl Theme {
 struct Page {
     source: PathBuf,
     output: PathBuf,
-    theme: Theme,
+    /// `auto`, `light` or `dark`.
+    scheme: &'static str,
     renderer: Renderer,
 }
 
@@ -128,7 +139,7 @@ impl Page {
     fn write(&self, markdown: &str) -> Result<()> {
         let title = self.source.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
         let base_dir = self.source.parent().unwrap_or(Path::new("/"));
-        let html = self.renderer.render(markdown, &title, base_dir, self.theme.as_str());
+        let html = self.renderer.render(markdown, &title, base_dir, self.scheme);
         // Write then rename, so a reload never sees a half-written page.
         let tmp = self.output.with_extension(format!("{}.tmp", std::process::id()));
         fs::write(&tmp, html).with_context(|| format!("writing {}", tmp.display()))?;
@@ -148,7 +159,25 @@ fn main() -> Result<()> {
         None => default_output(&source)?,
     };
     let plugins = if cli.no_plugins { Vec::new() } else { plugins::load_installed()? };
-    let page = Page { source, output, theme: cli.theme, renderer: Renderer::new(plugins)? };
+    let terminal: Option<terminal::Style> = match (cli.theme, &cli.terminal_style) {
+        (Theme::Terminal, Some(json)) => Some(serde_json::from_str(json).context("reading --terminal-style")?),
+        // The watcher got no style because detection already failed; don't ask again.
+        (Theme::Terminal, None) if cli.attach.is_some() => None,
+        (Theme::Terminal, None) => {
+            let style = terminal::detect();
+            if style.is_none() {
+                eprintln!("tmdview: the terminal didn't report its colors; using the auto theme");
+            }
+            style
+        }
+        _ => None,
+    };
+    let page = Page {
+        source,
+        output,
+        scheme: terminal.as_ref().map_or(cli.theme.as_str(), terminal::Style::scheme),
+        renderer: Renderer::new(plugins, terminal.as_ref().map(terminal::Style::css))?,
+    };
 
     if let Some(before) = &cli.attach {
         // The tmdview that started us already wrote the page.
@@ -170,7 +199,7 @@ fn main() -> Result<()> {
     if !cli.no_watch {
         // Started before the browser opens: it finds the new tab itself, which can take
         // seconds while a browser starts, so nothing here waits for it.
-        spawn_watcher(&browser::snapshot())?;
+        spawn_watcher(&browser::snapshot(), terminal.as_ref())?;
     }
     match cli.split {
         Some(direction) => {
@@ -189,9 +218,13 @@ fn main() -> Result<()> {
 /// Start a detached copy of tmdview, with the same arguments plus `--attach`, that
 /// reloads the new tab on every save and exits when the tab closes. It runs in its own
 /// process group, so Ctrl-C in the shell doesn't stop it.
-fn spawn_watcher(before: &[browser::Tab]) -> Result<()> {
+fn spawn_watcher(before: &[browser::Tab], terminal: Option<&terminal::Style>) -> Result<()> {
     let mut cmd = Process::new(std::env::current_exe().context("finding the tmdview binary")?);
-    cmd.args(std::env::args_os().skip(1)).arg("--attach");
+    cmd.args(std::env::args_os().skip(1));
+    if let Some(style) = terminal {
+        cmd.arg("--terminal-style").arg(serde_json::to_string(style)?);
+    }
+    cmd.arg("--attach");
     if !before.is_empty() {
         cmd.arg(before.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
     }
