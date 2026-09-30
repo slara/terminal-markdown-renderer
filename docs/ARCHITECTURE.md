@@ -164,16 +164,16 @@ The dark rules sit under `:root[data-theme="dark"]` and under a `prefers-color-s
 
 `--theme terminal` reads the look of the terminal tmdview runs in, in `terminal.rs`:
 
-1. It opens `/dev/tty`, turns off echo and line buffering, and sends OSC 10, 11 and 4 queries for the foreground, background and ANSI colors 0 to 15.
+1. It opens `/dev/tty`, turns off echo and line buffering, and sends OSC 10 and 11 queries for the foreground and background.
 2. It ends the queries with a device attributes request (`ESC [ c`), which every terminal answers. Once that answer arrives, there's nothing more to wait for, so a terminal that ignores the color queries costs one round trip. It gives up after 500 ms.
-3. Any color still missing, and the font, come from `ghostty +show-config` when running in Ghostty. Missing ANSI colors fall back to xterm's.
+3. A color still missing, and the font, come from `ghostty +show-config` when running in Ghostty.
 4. If there's still no background and foreground, tmdview says so and uses the `auto` theme.
 
 The page gets `data-theme="dark"` or `"light"`, from whether the background is darker than the text, so plugins pick the matching theme.
 The terminal CSS takes the place of syntect's code colors, after the page's own CSS, so tmdview doesn't build syntect's CSS at all.
-It sets the page's color variables, plus one per ANSI color, and the rest of it is fixed CSS in terms of those variables.
-It maps code scopes (comments, strings, keywords and so on) to the ANSI colors, and sets all text in the terminal font at 14px with smaller headings, since monospace runs wide.
-On a dark background it uses the bright variants, which usually read better.
+It sets the page's background, text and gray variables from the terminal's two colors, and the link, highlight and code colors from GitHub Dark or GitHub Light, whichever matches the background.
+The rest is fixed CSS in terms of those variables: it maps code scopes (comments, strings, keywords and so on) the way GitHub does, and sets all text in the terminal font at 14px with smaller headings, since monospace runs wide.
+It doesn't use the terminal's ANSI palette: those colors are tuned for a terminal, and read loud on a page.
 
 The background watcher has no terminal to ask, so tmdview passes the colors it found to it as JSON, in the hidden `--terminal-style` flag.
 

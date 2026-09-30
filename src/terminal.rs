@@ -1,7 +1,8 @@
-//! The terminal's own look, for `--theme terminal`: its colors and, where the terminal
-//! tells us, its font.
+//! The terminal's own look, for `--theme terminal`: its background and text colors
+//! and, where the terminal tells us, its font. Links, highlights and code take GitHub's
+//! colors, Dark or Light to match the background.
 //!
-//! Colors come from asking the terminal itself (OSC 10, 11 and 4), which any modern
+//! Colors come from asking the terminal itself (OSC 10 and 11), which any modern
 //! terminal answers. Whatever it doesn't answer comes from Ghostty's config, when
 //! running in Ghostty. The font only comes from Ghostty's config, since terminals have
 //! no way to report it.
@@ -59,8 +60,6 @@ impl Rgb {
 pub struct Style {
     pub bg: Rgb,
     pub fg: Rgb,
-    /// ANSI colors 0 to 15.
-    pub palette: [Rgb; 16],
     pub font: Option<String>,
 }
 
@@ -69,7 +68,6 @@ pub struct Style {
 struct Found {
     bg: Option<Rgb>,
     fg: Option<Rgb>,
-    palette: [Option<Rgb>; 16],
     font: Option<String>,
 }
 
@@ -77,20 +75,9 @@ impl Found {
     fn fill_from(&mut self, other: Found) {
         self.bg = self.bg.or(other.bg);
         self.fg = self.fg.or(other.fg);
-        for (mine, theirs) in self.palette.iter_mut().zip(other.palette) {
-            *mine = mine.or(theirs);
-        }
         self.font = self.font.take().or(other.font);
     }
 }
-
-/// xterm's default ANSI colors, for any the terminal didn't report.
-const XTERM: [Rgb; 16] = [
-    Rgb(0x00, 0x00, 0x00), Rgb(0xcd, 0x00, 0x00), Rgb(0x00, 0xcd, 0x00), Rgb(0xcd, 0xcd, 0x00),
-    Rgb(0x00, 0x00, 0xee), Rgb(0xcd, 0x00, 0xcd), Rgb(0x00, 0xcd, 0xcd), Rgb(0xe5, 0xe5, 0xe5),
-    Rgb(0x7f, 0x7f, 0x7f), Rgb(0xff, 0x00, 0x00), Rgb(0x00, 0xff, 0x00), Rgb(0xff, 0xff, 0x00),
-    Rgb(0x5c, 0x5c, 0xff), Rgb(0xff, 0x00, 0xff), Rgb(0x00, 0xff, 0xff), Rgb(0xff, 0xff, 0xff),
-];
 
 /// The terminal's style, or `None` if neither the terminal nor its config gave a
 /// background and foreground.
@@ -102,12 +89,7 @@ pub fn detect() -> Option<Style> {
     if let Some(config) = ghostty.and_then(|child| child.wait_with_output().ok()).filter(|out| out.status.success()) {
         found.fill_from(parse_ghostty_config(&String::from_utf8_lossy(&config.stdout)));
     }
-    Some(Style {
-        bg: found.bg?,
-        fg: found.fg?,
-        palette: std::array::from_fn(|i| found.palette[i].unwrap_or(XTERM[i])),
-        font: found.font,
-    })
+    Some(Style { bg: found.bg?, fg: found.fg?, font: found.font })
 }
 
 impl Style {
@@ -120,18 +102,14 @@ impl Style {
         if self.is_dark() { "dark" } else { "light" }
     }
 
-    /// CSS that overrides the page's colors and fonts, and colors code with the
-    /// terminal's ANSI colors, in place of syntect's code colors.
+    /// CSS that sets the page's background, text and font from the terminal, and its
+    /// accents from GitHub, in place of syntect's code colors.
     pub fn css(&self) -> String {
-        let (bg, fg, p) = (self.bg, self.fg, &self.palette);
-        // The bright variants usually read better on a dark background, the normal ones on a light one.
-        let dark = self.is_dark();
-        let ansi = |n: usize| if dark { p[n + 8] } else { p[n] }.hex();
+        let (bg, fg) = (self.bg, self.fg);
         let font = match &self.font {
             Some(name) => format!("\"{}\", ", css_string(name)),
             None => String::new(),
         };
-        let (blue, yellow, muted) = (ansi(4), ansi(3), fg.mix(bg, 0.4).hex());
         format!(
             r#":root[data-theme] {{
   --bg: {bg};
@@ -139,48 +117,67 @@ impl Style {
   --muted: {muted};
   --border: {border};
   --subtle-bg: {subtle};
-  --link: {fg};
-  --mark: {yellow}55;
   --quote: {muted};
-  --red: {red};
-  --green: {green};
-  --yellow: {yellow};
-  --blue: {blue};
-  --magenta: {magenta};
-  --cyan: {cyan};
   --font: {font}var(--mono);
-}}
+{accents}}}
 {CSS}"#,
             bg = bg.hex(),
             fg = fg.hex(),
+            muted = fg.mix(bg, 0.4).hex(),
             border = fg.mix(bg, 0.75).hex(),
             subtle = bg.mix(fg, 0.06).hex(),
-            red = ansi(1),
-            green = ansi(2),
-            magenta = ansi(5),
-            cyan = ansi(6),
+            accents = if self.is_dark() { GITHUB_DARK } else { GITHUB_LIGHT },
         )
     }
 }
 
+/// GitHub Dark's link, highlight and code colors (Primer's "prettylights").
+const GITHUB_DARK: &str = "  --link: #4493f8;
+  --mark: #bb800926;
+  --hl-comment: #8b949e;
+  --hl-keyword: #ff7b72;
+  --hl-string: #a5d6ff;
+  --hl-constant: #79c0ff;
+  --hl-entity: #d2a8ff;
+  --hl-tag: #7ee787;
+  --hl-variable: #ffa657;
+  --hl-inserted: #aff5b4;
+  --hl-deleted: #ffdcd7;
+";
+
+/// GitHub Light's, for a terminal with a light background.
+const GITHUB_LIGHT: &str = "  --link: #0969da;
+  --mark: #fff8c5;
+  --hl-comment: #59636e;
+  --hl-keyword: #cf222e;
+  --hl-string: #0a3069;
+  --hl-constant: #0550ae;
+  --hl-entity: #8250df;
+  --hl-tag: #116329;
+  --hl-variable: #953800;
+  --hl-inserted: #116329;
+  --hl-deleted: #82071e;
+";
+
 /// The part of the terminal theme that doesn't depend on the terminal: the type and
-/// the code colors, all in terms of the variables above.
+/// how code scopes map to the accent variables, as GitHub maps them.
 const CSS: &str = r#"/* Monospace runs wide, so the text is smaller and the headings flatter than the default theme's. */
 body { font: 14px/1.5 var(--font); }
 code, pre, kbd { font-family: inherit; font-size: 100%; }
 h1 { font-size: 1.5em; }
 h2 { font-size: 1.25em; }
 h3 { font-size: 1.1em; }
-/* Links keep the text color, marked by an underline, so the page isn't dotted with blue. */
-a { text-decoration: underline; text-decoration-color: var(--muted); text-underline-offset: .2em; }
-a:hover { text-decoration-color: var(--fg); }
-.hl-comment, .hl-punctuation.hl-definition.hl-comment { color: var(--muted); font-style: italic; }
-.hl-string, .hl-markup.hl-inserted { color: var(--green); }
-.hl-constant, .hl-entity.hl-other.hl-attribute-name { color: var(--yellow); }
-.hl-keyword, .hl-storage { color: var(--magenta); }
-.hl-entity.hl-name.hl-function, .hl-support.hl-function, .hl-markup.hl-heading { color: var(--blue); }
-.hl-entity.hl-name, .hl-support.hl-type, .hl-support.hl-class, .hl-storage.hl-type, .hl-constant.hl-character.hl-escape { color: var(--cyan); }
-.hl-entity.hl-name.hl-tag, .hl-invalid, .hl-markup.hl-deleted { color: var(--red); }
+.hl-comment, .hl-punctuation.hl-definition.hl-comment { color: var(--hl-comment); }
+.hl-keyword, .hl-storage { color: var(--hl-keyword); }
+.hl-string { color: var(--hl-string); }
+.hl-constant, .hl-support, .hl-variable.hl-language, .hl-entity.hl-other.hl-attribute-name, .hl-markup.hl-heading { color: var(--hl-constant); }
+.hl-entity.hl-name, .hl-entity.hl-other.hl-inherited-class { color: var(--hl-entity); }
+.hl-entity.hl-name.hl-tag { color: var(--hl-tag); }
+.hl-variable.hl-parameter, .hl-variable.hl-other.hl-member { color: var(--hl-variable); }
+.hl-string .hl-constant.hl-character.hl-escape { color: var(--hl-tag); }
+.hl-markup.hl-inserted { color: var(--hl-inserted); }
+.hl-markup.hl-deleted, .hl-invalid { color: var(--hl-deleted); }
+.hl-markup.hl-heading { font-weight: bold; }
 .hl-markup.hl-bold { font-weight: bold; }
 .hl-markup.hl-italic { font-style: italic; }
 "#;
@@ -220,11 +217,8 @@ fn query_tty() -> Option<Found> {
         return None;
     }
 
-    let mut query = String::from("\x1b]10;?\x1b\\\x1b]11;?\x1b\\");
-    for i in 0..16 {
-        query.push_str(&format!("\x1b]4;{i};?\x1b\\"));
-    }
-    query.push_str("\x1b[c");
+    // Foreground, background, then device attributes.
+    let query = "\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b[c";
     let mut reply = Vec::new();
     if tty.write_all(query.as_bytes()).and_then(|()| tty.flush()).is_ok() {
         let deadline = Instant::now() + Duration::from_millis(500);
@@ -261,11 +255,6 @@ fn parse_replies(reply: &str) -> Found {
         match (fields.next(), fields.next(), fields.next()) {
             (Some("10"), Some(color), None) => found.fg = Rgb::parse(color),
             (Some("11"), Some(color), None) => found.bg = Rgb::parse(color),
-            (Some("4"), Some(index), Some(color)) => {
-                if let Some(slot) = index.parse::<usize>().ok().and_then(|i| found.palette.get_mut(i)) {
-                    *slot = Rgb::parse(color);
-                }
-            }
             _ => {}
         }
     }
@@ -294,13 +283,6 @@ fn parse_ghostty_config(config: &str) -> Found {
             "font-family" if found.font.is_none() && !value.is_empty() => {
                 found.font = Some(value.trim_matches('"').to_string());
             }
-            "palette" => {
-                if let Some((index, color)) = value.split_once('=')
-                    && let Some(slot) = index.trim().parse::<usize>().ok().and_then(|i| found.palette.get_mut(i))
-                {
-                    *slot = Rgb::parse(color);
-                }
-            }
             _ => {}
         }
     }
@@ -328,8 +310,6 @@ mod tests {
         let found = parse_replies(reply);
         assert_eq!(found.fg, Some(Rgb(0xc5, 0xc8, 0xc6)));
         assert_eq!(found.bg, Some(Rgb(0x22, 0x22, 0x22)));
-        assert_eq!(found.palette[4], Some(Rgb(0x85, 0xbe, 0xfd)));
-        assert_eq!(found.palette[0], None);
         assert!(ends_with_device_attributes(reply.as_bytes()));
         assert!(!ends_with_device_attributes(b"\x1b]11;rgb:0/0/0\x1b\\"));
     }
@@ -340,27 +320,23 @@ mod tests {
         let found = parse_ghostty_config(config);
         assert_eq!(found.font.as_deref(), Some("MesloLGS Nerd Font Mono"));
         assert_eq!(found.bg, Some(Rgb(0x22, 0x22, 0x22)));
-        assert_eq!(found.palette[2], Some(Rgb(0x87, 0xc3, 0x8a)));
     }
 
     #[test]
-    fn css_uses_the_terminal_colors_and_a_safe_font_name() {
-        let style = Style {
-            bg: Rgb(0x22, 0x22, 0x22),
-            fg: Rgb(0xc5, 0xc8, 0xc6),
-            palette: XTERM,
-            font: Some("Evil\"</style>".into()),
-        };
-        assert!(style.is_dark());
-        let css = style.css();
+    fn css_uses_the_terminal_colors_github_accents_and_a_safe_font_name() {
+        let dark = Style { bg: Rgb(0x22, 0x22, 0x22), fg: Rgb(0xc5, 0xc8, 0xc6), font: Some("Evil\"</style>".into()) };
+        assert!(dark.is_dark());
+        let css = dark.css();
         assert!(css.contains("--bg: #222222;"), "{css}");
-        assert!(css.contains("--blue: #5c5cff;"), "bright blue on a dark background: {css}");
+        assert!(css.contains("--link: #4493f8;"), "GitHub Dark's link blue: {css}");
         assert!(css.contains("--font: \"Evil/style\", var(--mono);"), "{css}");
+        let light = Style { bg: Rgb(0xff, 0xff, 0xff), fg: Rgb(0x1f, 0x23, 0x28), font: None };
+        assert!(light.css().contains("--link: #0969da;"), "GitHub Light's on a light background");
     }
 
     #[test]
     fn style_survives_the_trip_to_the_watcher() {
-        let style = Style { bg: Rgb(1, 2, 3), fg: Rgb(4, 5, 6), palette: XTERM, font: None };
+        let style = Style { bg: Rgb(1, 2, 3), fg: Rgb(4, 5, 6), font: None };
         let json = serde_json::to_string(&style).unwrap();
         assert_eq!(serde_json::from_str::<Style>(&json).unwrap(), style);
     }

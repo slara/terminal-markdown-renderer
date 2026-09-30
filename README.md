@@ -59,7 +59,7 @@ Math is recognized but shown as plain text, not typeset.
 
 ## Matching your terminal
 
-`--theme terminal` makes the page look like part of the terminal: its background, text color and ANSI colors, with code colored from the same palette.
+`--theme terminal` makes the page look like part of the terminal: its background and text color, with GitHub's link and code colors on top (GitHub Dark on a dark background, GitHub Light on a light one).
 tmdview asks the terminal for its colors when it starts, so this works in most modern terminals.
 Anything the terminal doesn't answer comes from Ghostty's config, when you run tmdview in Ghostty.
 
