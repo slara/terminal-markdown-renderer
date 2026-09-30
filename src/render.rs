@@ -65,12 +65,17 @@ impl Renderer {
             | Options::ENABLE_SMART_PUNCTUATION
             | Options::ENABLE_HEADING_ATTRIBUTES
             | Options::ENABLE_GFM
-            | Options::ENABLE_MATH;
+            | Options::ENABLE_MATH
+            // Front matter (`---` YAML or `+++` TOML at the top) is data for other tools, not
+            // page content. The HTML writer leaves these blocks out.
+            | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
+            | Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS;
 
         let mut events = Vec::new();
         let mut code: Option<(String, String)> = None; // (lang, source)
         let mut used: Vec<usize> = Vec::new();
         let mut heading: Option<(Tag, Vec<Event>)> = None; // (start tag, inner events)
+        let mut cell: Option<Vec<Event>> = None; // a table cell's inner events
         // Explicit `{#id}`s are reserved up front so generated slugs never collide with them.
         let mut used_ids: HashSet<String> = Parser::new_ext(markdown, options)
             .filter_map(|e| match e {
@@ -117,13 +122,21 @@ impl Renderer {
                     code = Some((lang, String::new()));
                 }
                 Event::Start(tag @ Tag::Heading { .. }) => heading = Some((tag, Vec::new())),
-                Event::InlineMath(m) => events.push(Event::Html(
+                Event::Start(Tag::TableCell) => {
+                    events.push(event);
+                    cell = Some(Vec::new());
+                }
+                Event::End(TagEnd::TableCell) => {
+                    events.extend(no_wrap(cell.take().unwrap_or_default()));
+                    events.push(event);
+                }
+                Event::InlineMath(m) => cell.as_mut().unwrap_or(&mut events).push(Event::Html(
                     format!("<span class=\"math\">{}</span>", escape(&m)).into(),
                 )),
-                Event::DisplayMath(m) => events.push(Event::Html(
+                Event::DisplayMath(m) => cell.as_mut().unwrap_or(&mut events).push(Event::Html(
                     format!("<div class=\"math math-display\">{}</div>", escape(&m)).into(),
                 )),
-                other => events.push(other),
+                other => cell.as_mut().unwrap_or(&mut events).push(other),
             }
         }
 
@@ -195,6 +208,20 @@ fn scope_css(css: &str, scope: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// A table cell's contents, kept on one line when they have no spaces, like an ID, a
+/// date or a version. Otherwise a narrow column breaks `D-01` after the hyphen.
+fn no_wrap(inner: Vec<Event>) -> Vec<Event> {
+    let text = plain_text(&inner);
+    if text.is_empty() || text.chars().any(char::is_whitespace) {
+        return inner;
+    }
+    let mut out = Vec::with_capacity(inner.len() + 2);
+    out.push(Event::InlineHtml("<span class=\"nowrap\">".into()));
+    out.extend(inner);
+    out.push(Event::InlineHtml("</span>".into()));
+    out
 }
 
 fn plain_text(events: &[Event]) -> String {
@@ -337,6 +364,23 @@ mod tests {
     fn unknown_language_is_escaped_plain() {
         let html = body("```nope\n<b>\n```\n");
         assert!(html.contains("<pre data-lang=\"nope\"><code>&lt;b&gt;\n</code></pre>"), "{html}");
+    }
+
+    #[test]
+    fn front_matter_is_left_out() {
+        let html = body("---\ntitle: Spec\nmeta:\n  a: 1\n---\n\n# Hi\n");
+        assert_eq!(html, "<h1 id=\"hi\">Hi</h1>\n");
+        let html = body("+++\ntitle = \"Spec\"\n+++\n\nText\n");
+        assert_eq!(html, "<p>Text</p>\n");
+    }
+
+    #[test]
+    fn table_cells_without_spaces_stay_on_one_line() {
+        let html = body("| ID | What |\n|---|---|\n| D-01 | Two words |\n| `x-y` | $a$ |\n");
+        assert!(html.contains(r#"<td><span class="nowrap">D-01</span></td>"#), "{html}");
+        assert!(html.contains("<td>Two words</td>"), "{html}");
+        assert!(html.contains(r#"<td><span class="nowrap"><code>x-y</code></span></td>"#), "{html}");
+        assert!(html.contains(r#"<span class="math">a</span>"#), "math in a cell still renders: {html}");
     }
 
     #[test]

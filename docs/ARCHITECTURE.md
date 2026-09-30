@@ -126,13 +126,17 @@ The scroll script waits for all of them before it restores your position, since 
 
 `render.rs` uses [pulldown-cmark](https://github.com/pulldown-cmark/pulldown-cmark) to parse the Markdown.
 The parser produces a stream of events (start of a heading, some text, end of a heading, and so on).
-tmdview changes three kinds of events before turning the stream into HTML:
+tmdview changes four kinds of events before turning the stream into HTML:
 
 | Event | What tmdview does |
 |---|---|
 | Code block | Collects the code, then colors it with [syntect](https://github.com/trishume/syntect). Unknown languages are shown plain and escaped. |
 | Heading | Turns the heading's text into an ID, so `## How it works` gets `id="how-it-works"`. Repeats get `-1`, `-2` and so on. |
+| Table cell | Wraps a cell with no spaces, like `D-01` or a date, in `<span class="nowrap">`, so a narrow column doesn't break it after a hyphen. |
 | Math | Wraps `$...$` in `<span class="math">` and `$$...$$` in `<div class="math">`, without typesetting. |
+
+The parser also recognizes front matter, a `---` YAML or `+++` TOML block at the top of the file, and the HTML writer leaves it out.
+Without that, the block would show up as a line, a paragraph and a heading.
 
 A heading can also set its own ID, like `# Intro {#intro}`.
 Before the main pass, tmdview reads all of these custom IDs, so a generated ID never takes one of them.
@@ -314,11 +318,11 @@ It restores on the `load` event, after images have loaded, so the page is tall e
 
 ## Tests
 
-`cargo test` runs 26 tests. They cover:
+`cargo test` runs 28 tests. They cover:
 
 - heading IDs, including duplicates and custom `{#id}`s
 - syntax colors, and plain output for unknown languages
-- tables, task lists and strikethrough
+- tables, task lists and strikethrough, front matter, and table cells kept on one line
 - percent-encoding and decoding of file paths
 - plugins: claimed blocks, files added once, pages without claimed blocks left alone, and the claim order (claimed language, syntect, fallback, plain)
 - conflicts between plugins, escaping `</script` in inlined files, the `data:` URL for risky scripts, and base64

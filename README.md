@@ -53,6 +53,7 @@ tmdview plugins install mermaid       # draw ```mermaid blocks as diagrams from 
 - Code blocks with syntax colors, in light and dark themes
 - Links to headings (`#usage`), including headings you give a custom `{#id}`
 - Relative links and images, resolved from the Markdown file's folder
+- Front matter (`---` YAML or `+++` TOML at the top) is left out of the page
 
 Math is recognized but shown as plain text, not typeset.
 
