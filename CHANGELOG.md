@@ -4,6 +4,8 @@
 
 ### Added
 
+- A config file, `~/.config/tmdview/config.toml`, for flag defaults (`theme`, `split`, `size`, `watch`, `poll`), code colors (`[colors.light]`, `[colors.dark]`) and plugin settings (`[plugins.<name>]`, which a plugin reads as `tmdview.config.<name>`). Mermaid passes its settings to `mermaid.initialize`.
+
 - A copy button on each code block. It shows on hover and says "Copied" once the code is on the clipboard.
 
 ### Changed

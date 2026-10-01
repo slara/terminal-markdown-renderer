@@ -47,6 +47,33 @@ tmdview plugins install mermaid       # draw ```mermaid blocks as diagrams from 
 |---|---|
 | `Ctrl+Q` or `Ctrl+C` | Close the viewer. tmdview stops watching the file within 10 seconds. |
 
+## Config file
+
+`~/.config/tmdview/config.toml` (or `$XDG_CONFIG_HOME/tmdview/config.toml`) sets defaults for the flags, the code colors and plugin settings.
+Every part is optional, and a flag on the command line wins over the file.
+
+```toml
+theme = "terminal"   # auto, light, dark or terminal
+split = "right"      # right, left, down or up
+size = 0.5
+watch = true
+poll = false
+
+# Code colors, over GitHub's. Names: comment, keyword, string, constant,
+# entity, tag, variable, inserted, deleted.
+[colors.light]
+keyword = "#cf222e"
+
+[colors.dark]
+keyword = "#ff7b72"
+
+# Each plugin's settings. Mermaid passes them to mermaid.initialize.
+[plugins.mermaid]
+theme = "forest"
+```
+
+A typo or a value that isn't valid stops tmdview with a message that names the file.
+
 ## What it renders
 
 - GitHub-flavored Markdown: tables, task lists, footnotes, strikethrough

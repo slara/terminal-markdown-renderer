@@ -1,4 +1,5 @@
 mod browser;
+mod config;
 mod plugins;
 mod render;
 mod terminal;
@@ -12,7 +13,9 @@ use std::process::{Command as Process, Stdio};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use serde::Deserialize;
 
+use config::Config;
 use render::Renderer;
 
 /// View a markdown file rendered as HTML in a browser inside the terminal.
@@ -27,11 +30,12 @@ struct Cli {
     file: Option<PathBuf>,
 
     /// Open in a new pane beside the current one instead of taking over this pane.
+    /// Defaults to the config file's `split`.
     #[arg(short, long, value_enum)]
     split: Option<Direction>,
 
     /// Fraction of the space the split pane takes (0.2 to 0.95).
-    #[arg(long, requires = "split")]
+    #[arg(long)]
     size: Option<f32>,
 
     /// Don't reload the page when the file is saved.
@@ -50,8 +54,9 @@ struct Cli {
 
     /// Color theme. `auto` follows the browser's preference. `terminal` takes the
     /// colors, and in Ghostty the font, from the terminal you run tmdview in.
-    #[arg(short, long, value_enum, default_value_t = Theme::Auto)]
-    theme: Theme,
+    /// Defaults to the config file's `theme`, or `auto`.
+    #[arg(short, long, value_enum)]
+    theme: Option<Theme>,
 
     /// Internal: the terminal's style as JSON, from the tmdview that started this
     /// background watcher, which has no terminal to ask.
@@ -80,7 +85,8 @@ enum Command {
     },
 }
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, ValueEnum, Deserialize)]
+#[serde(rename_all = "lowercase")]
 enum Direction {
     Right,
     Left,
@@ -88,7 +94,8 @@ enum Direction {
     Up,
 }
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, ValueEnum, Deserialize)]
+#[serde(rename_all = "lowercase")]
 enum Theme {
     Auto,
     Light,
@@ -147,8 +154,15 @@ fn main() -> Result<()> {
         Some(path) => path.clone(),
         None => default_output(&source)?,
     };
+    // The command line wins over the config file.
+    let config = Config::load()?;
+    let theme = cli.theme.or(config.theme).unwrap_or(Theme::Auto);
+    let split = cli.split.or(config.split);
+    let size = cli.size.or(config.size);
+    let watch = !cli.no_watch && config.watch.unwrap_or(true);
+    let poll = cli.poll || config.poll.unwrap_or(false);
     let plugins = if cli.no_plugins { Vec::new() } else { plugins::load_installed()? };
-    let terminal: Option<terminal::Style> = match (cli.theme, &cli.terminal_style) {
+    let terminal: Option<terminal::Style> = match (theme, &cli.terminal_style) {
         (Theme::Terminal, Some(json)) => Some(serde_json::from_str(json).context("reading --terminal-style")?),
         // The watcher got no style because detection already failed; don't ask again.
         (Theme::Terminal, None) if cli.attach.is_some() => None,
@@ -164,15 +178,19 @@ fn main() -> Result<()> {
     let page = Page {
         source,
         output,
-        scheme: terminal.as_ref().map_or(cli.theme.as_str(), terminal::Style::scheme),
-        renderer: Renderer::new(plugins, terminal.as_ref().map(terminal::Style::css)),
+        scheme: terminal.as_ref().map_or(theme.as_str(), terminal::Style::scheme),
+        renderer: Renderer::new(
+            plugins,
+            terminal.as_ref().map_or_else(String::new, terminal::Style::css) + &config.colors_css(),
+            config.plugins_json(),
+        ),
     };
 
     if let Some(before) = &cli.attach {
         // The tmdview that started us already wrote the page.
         let log = Log::new(watch::log_path(&page.output));
         match browser::find_new_tab(&fs::canonicalize(&page.output)?, before) {
-            Some(tab) => watch::run(&page, &tab, cli.poll, &log),
+            Some(tab) => watch::run(&page, &tab, poll, &log),
             None => log.say("couldn't find the browser tab; not reloading on save"),
         }
         return Ok(());
@@ -185,16 +203,16 @@ fn main() -> Result<()> {
         println!("{}", output.display());
         return Ok(());
     }
-    if !cli.no_watch {
+    if watch {
         // Started before the browser opens: it finds the new tab itself, which can take
         // seconds while a browser starts, so nothing here waits for it.
         spawn_watcher(&browser::snapshot(), terminal.as_ref())?;
     }
-    match cli.split {
+    match split {
         Some(direction) => {
             let direction = direction.to_possible_value().expect("no skipped variants");
-            browser::open_split(&output, direction.get_name(), cli.size)?;
-            if !cli.no_watch {
+            browser::open_split(&output, direction.get_name(), size)?;
+            if watch {
                 eprintln!("tmdview: reloading on every save; messages go to {}", watch::log_path(&page.output).display());
             }
         }

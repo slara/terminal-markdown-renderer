@@ -121,7 +121,8 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Draw each claimed block, in the Mermaid theme that matches the page's theme.
+/// Draw each claimed block, in the Mermaid theme that matches the page's theme. The
+/// config file's `[plugins.mermaid]` goes to `mermaid.initialize`, over these defaults.
 const MERMAID_INIT: &str = r#"(() => {
   const blocks = [...document.querySelectorAll('pre[data-plugin="mermaid"]')];
   for (const pre of blocks) {
@@ -131,7 +132,7 @@ const MERMAID_INIT: &str = r#"(() => {
   }
   const forced = document.documentElement.dataset.theme;
   const dark = forced ? forced === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
-  mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "default" });
+  mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "default", ...tmdview.config.mermaid });
   tmdview.ready(mermaid.run({ nodes: blocks }));
 })();
 "#;

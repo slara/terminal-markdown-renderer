@@ -123,6 +123,16 @@ const dark = forced ? forced === "dark" : matchMedia("(prefers-color-scheme: dar
 ```
 
 To match the page, use its CSS variables on `:root`, such as `--fg`, `--bg`, `--subtle-bg`, `--border` and `--link`.
+Code colors are `--hl-comment`, `--hl-keyword`, `--hl-string`, `--hl-constant`, `--hl-entity`, `--hl-tag`, `--hl-variable`, `--hl-inserted` and `--hl-deleted`, so a plugin that colors code can follow the user's `[colors]`.
+
+## Settings
+
+A user's `[plugins.<name>]` table in `~/.config/tmdview/config.toml` reaches your script as `tmdview.config.<name>`, before any plugin script runs.
+It's `undefined` when the user set nothing, so give every setting a default:
+
+```js
+const theme = tmdview.config.d2?.theme ?? "neutral";
+```
 
 ## Trying it
 

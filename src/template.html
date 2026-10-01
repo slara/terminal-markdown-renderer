@@ -170,7 +170,8 @@ pre[data-lang]:hover::before { visibility: hidden; }
 </main>
 <script>
 // Plugins that draw after load pass their promise to `tmdview.ready`, since drawing changes the page height.
-window.tmdview = { pending: [], ready(promise) { this.pending.push(promise); } };
+// `config` holds each plugin's table from the config file, by plugin name.
+window.tmdview = { pending: [], config: {}, ready(promise) { this.pending.push(promise); } };
 </script>
 {{plugins}}<script>
 // A copy button on each code block. This runs after the plugins, so blocks a plugin drew

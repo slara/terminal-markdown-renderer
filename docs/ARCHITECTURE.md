@@ -32,6 +32,7 @@ flowchart LR
 | File | Job |
 |---|---|
 | `src/main.rs` | Command-line flags, where the output goes, starting the background watcher, where messages go |
+| `src/config.rs` | `~/.config/tmdview/config.toml`: flag defaults, code colors, plugin settings |
 | `src/watch.rs` | File change events with a polling fallback, and the loop that rebuilds and reloads |
 | `src/render.rs` | Markdown to a full HTML page, syntax colors, heading IDs, file URLs |
 | `src/template.html` | Page layout, CSS for both themes, the script that keeps your scroll position |
@@ -157,6 +158,7 @@ The colors are GitHub's (Primer's "prettylights"), the same ones the `highlight`
 syntect only parses, so tmdview doesn't build in its themes.
 
 The dark variables sit under `:root[data-theme="dark"]` and under a `prefers-color-scheme: dark` media query.
+The config file's `[colors.light]` and `[colors.dark]` set the same variables again, under the same selectors, after the template's CSS.
 `--theme light` or `--theme dark` sets `data-theme` on the `<html>` tag, which overrides the system setting.
 
 ### The terminal theme
