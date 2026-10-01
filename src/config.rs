@@ -10,20 +10,20 @@ use serde::Deserialize;
 
 use crate::{Direction, Theme};
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub theme: Option<Theme>,
     pub split: Option<Direction>,
     pub size: Option<f32>,
     pub watch: Option<bool>,
-    pub poll: Option<bool>,
+    pub poll: bool,
     pub colors: Colors,
     /// Each plugin's table, which its script reads as `tmdview.config.<name>`.
     pub plugins: BTreeMap<String, toml::Table>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Colors {
     light: BTreeMap<String, String>,
@@ -66,16 +66,13 @@ impl Config {
             let vars: String = colors.iter().map(|(name, value)| format!("  --hl-{name}: {value};\n")).collect();
             format!("{scope} {{\n{vars}}}\n")
         };
-        let (light, dark) = (&self.colors.light, &self.colors.dark);
-        let mut css = String::new();
-        if !light.is_empty() {
-            css += &rule(":root", light);
-        }
-        if !dark.is_empty() {
-            css += &format!("@media (prefers-color-scheme: dark) {{\n{}}}\n", rule(":root:not([data-theme=\"light\"])", dark));
-            css += &rule(":root[data-theme=\"dark\"]", dark);
-        }
-        css
+        let dark = &self.colors.dark;
+        format!(
+            "{}@media (prefers-color-scheme: dark) {{\n{}}}\n{}",
+            rule(":root", &self.colors.light),
+            rule(":root:not([data-theme=\"light\"])", dark),
+            rule(":root[data-theme=\"dark\"]", dark),
+        )
     }
 
     /// The plugins' tables as one JSON object.
@@ -130,7 +127,7 @@ theme = "forest"
     fn an_empty_file_changes_nothing() {
         let config = Config::parse("").unwrap();
         assert!(config.theme.is_none());
-        assert_eq!(config.colors_css(), "");
+        assert!(!config.colors_css().contains("--hl-"));
         assert_eq!(config.plugins_json(), "{}");
     }
 

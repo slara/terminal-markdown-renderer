@@ -119,7 +119,9 @@ impl Style {
   --quote: {muted};
   --font: {font}var(--mono);
 }}
-{CSS}"#,
+/* Text keeps GitHub's type; code takes the terminal's font. */
+code, pre, kbd {{ font-family: var(--font); }}
+"#,
             bg = bg.hex(),
             fg = fg.hex(),
             muted = fg.mix(bg, 0.4).hex(),
@@ -128,12 +130,6 @@ impl Style {
         )
     }
 }
-
-/// The part of the terminal theme that doesn't depend on the terminal. Links,
-/// highlights and code keep the page's GitHub colors, Dark or Light from `data-theme`.
-const CSS: &str = r#"/* Text keeps GitHub's type; code takes the terminal's font. */
-code, pre, kbd { font-family: var(--font); }
-"#;
 
 /// Keep a font name from ending the CSS string it goes in or the `<style>` tag, and from
 /// looking like one of the template's `{{placeholders}}`.

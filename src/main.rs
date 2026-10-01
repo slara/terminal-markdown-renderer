@@ -85,7 +85,7 @@ enum Command {
     },
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum, Deserialize)]
+#[derive(Clone, Copy, ValueEnum, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Direction {
     Right,
@@ -94,7 +94,7 @@ enum Direction {
     Up,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum, Deserialize)]
+#[derive(Clone, Copy, ValueEnum, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Theme {
     Auto,
@@ -160,7 +160,7 @@ fn main() -> Result<()> {
     let split = cli.split.or(config.split);
     let size = cli.size.or(config.size);
     let watch = !cli.no_watch && config.watch.unwrap_or(true);
-    let poll = cli.poll || config.poll.unwrap_or(false);
+    let poll = cli.poll || config.poll;
     let plugins = if cli.no_plugins { Vec::new() } else { plugins::load_installed()? };
     let terminal: Option<terminal::Style> = match (theme, &cli.terminal_style) {
         (Theme::Terminal, Some(json)) => Some(serde_json::from_str(json).context("reading --terminal-style")?),

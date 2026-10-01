@@ -18,7 +18,7 @@ pub struct Renderer {
     /// The terminal's colors and font for `--theme terminal`, and the config file's
     /// code colors.
     theme_css: String,
-    /// The config file's plugin tables, as a JSON object, or nothing.
+    /// The config file's plugin tables, as a JSON object.
     plugin_config: String,
     plugins: Vec<Loaded>,
 }
@@ -47,10 +47,8 @@ impl Renderer {
             .replace("{{base}}", &escape(&base))
             .replace("{{theme_css}}", &self.theme_css)
             .replace("{{body}}", &body);
-        if !self.plugin_config.is_empty() && self.plugin_config != "{}" {
-            // `<` can't appear raw, so no value can close the script tag.
-            page.push_str(&format!("<script>tmdview.config = {};</script>\n", self.plugin_config.replace('<', "\\u003c")));
-        }
+        // `<` can't appear raw, so no value can close the script tag.
+        page.push_str(&format!("<script>tmdview.config = {};</script>\n", self.plugin_config.replace('<', "\\u003c")));
         if let Some(front_matter) = &front_matter {
             page.push_str(&front_matter.script());
             let keys = front_matter.keys();
@@ -411,7 +409,7 @@ mod tests {
     use super::*;
 
     fn body(md: &str) -> String {
-        Renderer::new(Vec::new(), String::new(), String::new()).render_body(md).html
+        Renderer::new(Vec::new(), String::new(), "{}".into()).render_body(md).html
     }
 
     #[test]
@@ -422,7 +420,7 @@ mod tests {
 
     #[test]
     fn plugin_claims_blocks_and_adds_its_assets_once() {
-        let renderer = Renderer::new(vec![plugin("mermaid", &["mermaid"], false)], String::new(), String::new());
+        let renderer = Renderer::new(vec![plugin("mermaid", &["mermaid"], false)], String::new(), "{}".into());
         let md = "```mermaid\ngraph LR; a-->b\n```\n\n```mermaid\ngraph TD; c-->d\n```\n";
         let page = renderer.render(md, "t", Path::new("/"), "auto");
         let block = r#"<pre class="tmdview-plugin" data-plugin="mermaid" data-lang="mermaid"><code>graph LR; a--&gt;b"#;
@@ -434,14 +432,14 @@ mod tests {
 
     #[test]
     fn plugins_skip_pages_without_their_blocks() {
-        let renderer = Renderer::new(vec![plugin("mermaid", &["mermaid"], false)], String::new(), String::new());
+        let renderer = Renderer::new(vec![plugin("mermaid", &["mermaid"], false)], String::new(), "{}".into());
         let page = renderer.render("# Hi\n", "t", Path::new("/"), "auto");
         assert!(!page.contains("mermaid script"));
     }
 
     #[test]
     fn claimed_languages_beat_syntect_and_fallback_only_takes_the_rest() {
-        let renderer = Renderer::new(vec![plugin("hl", &["python"], true)], String::new(), String::new());
+        let renderer = Renderer::new(vec![plugin("hl", &["python"], true)], String::new(), "{}".into());
         let html = renderer.render_body("```python\nx\n```\n\n```rust\nfn f() {}\n```\n\n```zig\nx\n```\n\n```\nx\n```\n").html;
         assert!(html.contains(r#"data-plugin="hl" data-lang="python""#), "{html}");
         assert!(html.contains(r#"class="hl-code" data-lang="rust""#), "{html}");
@@ -515,7 +513,7 @@ mod tests {
     fn front_matter_reaches_the_page_and_the_plugins_that_want_it() {
         let mut mts = plugin("mts", &[], false);
         mts.front_matter_keys = vec!["eyebrow".into()];
-        let renderer = Renderer::new(vec![mts, plugin("other", &[], false)], String::new(), String::new());
+        let renderer = Renderer::new(vec![mts, plugin("other", &[], false)], String::new(), "{}".into());
         let md = "---\ntitle: A </script> B\neyebrow: Spec\nmeta:\n  eyebrow: nested\n---\n\n# Hi\n";
         let page = renderer.render(md, "t", Path::new("/"), "auto");
         let script = r#"<script type="application/json" id="tmdview-front-matter">{"format":"yaml","source":"title: A \u003c/script> B\neyebrow: Spec"#;
@@ -535,7 +533,7 @@ mod tests {
 
     #[test]
     fn plugin_blocks_keep_the_rest_of_the_info_string() {
-        let renderer = Renderer::new(vec![plugin("mts", &["kpi"], false)], String::new(), String::new());
+        let renderer = Renderer::new(vec![plugin("mts", &["kpi"], false)], String::new(), "{}".into());
         let html = renderer.render_body("```kpi {fill=1,3}\n| a | 1 |\n```\n").html;
         assert!(html.contains(r#"data-plugin="mts" data-lang="kpi" data-info="{fill=1,3}">"#), "{html}");
     }
@@ -562,7 +560,5 @@ mod tests {
         let renderer = Renderer::new(Vec::new(), String::new(), r#"{"mermaid":{"x":"</script>"}}"#.into());
         let page = renderer.render("# Hi\n", "t", Path::new("/"), "auto");
         assert!(page.contains(r#"<script>tmdview.config = {"mermaid":{"x":"\u003c/script>"}};</script>"#), "{page}");
-        let none = Renderer::new(Vec::new(), String::new(), "{}".into()).render("# Hi\n", "t", Path::new("/"), "auto");
-        assert!(!none.contains("tmdview.config ="));
     }
 }
