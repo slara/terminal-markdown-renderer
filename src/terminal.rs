@@ -159,14 +159,10 @@ const GITHUB_LIGHT: &str = "  --link: #0969da;
   --hl-deleted: #82071e;
 ";
 
-/// The part of the terminal theme that doesn't depend on the terminal: the type and
-/// how code scopes map to the accent variables, as GitHub maps them.
-const CSS: &str = r#"/* Monospace runs wide, so the text is smaller and the headings flatter than the default theme's. */
-body { font: 14px/1.5 var(--font); }
-code, pre, kbd { font-family: inherit; font-size: 100%; }
-h1 { font-size: 1.5em; }
-h2 { font-size: 1.25em; }
-h3 { font-size: 1.1em; }
+/// The part of the terminal theme that doesn't depend on the terminal: the code font
+/// and how code scopes map to the accent variables, as GitHub maps them.
+const CSS: &str = r#"/* Text keeps GitHub's type; code takes the terminal's font. */
+code, pre, kbd { font-family: var(--font); }
 .hl-comment, .hl-punctuation.hl-definition.hl-comment { color: var(--hl-comment); }
 .hl-keyword, .hl-storage { color: var(--hl-keyword); }
 .hl-string { color: var(--hl-string); }

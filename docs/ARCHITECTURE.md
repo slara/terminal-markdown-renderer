@@ -172,7 +172,7 @@ The dark rules sit under `:root[data-theme="dark"]` and under a `prefers-color-s
 The page gets `data-theme="dark"` or `"light"`, from whether the background is darker than the text, so plugins pick the matching theme.
 The terminal CSS takes the place of syntect's code colors, after the page's own CSS, so tmdview doesn't build syntect's CSS at all.
 It sets the page's background, text and gray variables from the terminal's two colors, and the link, highlight and code colors from GitHub Dark or GitHub Light, whichever matches the background.
-The rest is fixed CSS in terms of those variables: it maps code scopes (comments, strings, keywords and so on) the way GitHub does, and sets all text in the terminal font at 14px with smaller headings, since monospace runs wide.
+The rest is fixed CSS in terms of those variables: it maps code scopes (comments, strings, keywords and so on) the way GitHub does, and sets code in the terminal font. Text keeps the page's GitHub fonts and sizes.
 It doesn't use the terminal's ANSI palette: those colors are tuned for a terminal, and read loud on a page.
 
 The background watcher has no terminal to ask, so tmdview passes the colors it found to it as JSON, in the hidden `--terminal-style` flag.

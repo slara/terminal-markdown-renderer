@@ -63,8 +63,8 @@ Math is recognized but shown as plain text, not typeset.
 tmdview asks the terminal for its colors when it starts, so this works in most modern terminals.
 Anything the terminal doesn't answer comes from Ghostty's config, when you run tmdview in Ghostty.
 
-The page uses a monospace font for all its text.
-In Ghostty it's your terminal font, read from `ghostty +show-config`. Other terminals can't report their font, so the page uses the system monospace font.
+Text uses GitHub's fonts, and code uses your terminal font.
+In Ghostty that's read from `ghostty +show-config`. Other terminals can't report their font, so code uses the system monospace font.
 If you change your terminal's theme, run tmdview again to pick it up.
 
 ## Plugins
