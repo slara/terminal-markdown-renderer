@@ -165,7 +165,7 @@ fn main() -> Result<()> {
         source,
         output,
         scheme: terminal.as_ref().map_or(cli.theme.as_str(), terminal::Style::scheme),
-        renderer: Renderer::new(plugins, terminal.as_ref().map(terminal::Style::css))?,
+        renderer: Renderer::new(plugins, terminal.as_ref().map(terminal::Style::css)),
     };
 
     if let Some(before) = &cli.attach {

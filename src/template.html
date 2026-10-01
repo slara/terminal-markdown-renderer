@@ -15,6 +15,15 @@
   --link: #0969da;
   --mark: #fff8c5;
   --quote: #59636e;
+  --hl-comment: #59636e;
+  --hl-keyword: #cf222e;
+  --hl-string: #0a3069;
+  --hl-constant: #0550ae;
+  --hl-entity: #8250df;
+  --hl-tag: #116329;
+  --hl-variable: #953800;
+  --hl-inserted: #116329;
+  --hl-deleted: #82071e;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   color-scheme: light;
 }
@@ -28,6 +37,15 @@
     --link: #4493f8;
     --mark: #bb800926;
     --quote: #9198a1;
+    --hl-comment: #8b949e;
+    --hl-keyword: #ff7b72;
+    --hl-string: #a5d6ff;
+    --hl-constant: #79c0ff;
+    --hl-entity: #d2a8ff;
+    --hl-tag: #7ee787;
+    --hl-variable: #ffa657;
+    --hl-inserted: #aff5b4;
+    --hl-deleted: #ffdcd7;
     color-scheme: dark;
   }
 }
@@ -40,6 +58,15 @@
   --link: #4493f8;
   --mark: #bb800926;
   --quote: #9198a1;
+  --hl-comment: #8b949e;
+  --hl-keyword: #ff7b72;
+  --hl-string: #a5d6ff;
+  --hl-constant: #79c0ff;
+  --hl-entity: #d2a8ff;
+  --hl-tag: #7ee787;
+  --hl-variable: #ffa657;
+  --hl-inserted: #aff5b4;
+  --hl-deleted: #ffdcd7;
   color-scheme: dark;
 }
 
@@ -109,9 +136,22 @@ tr:nth-child(2n) td { background: var(--subtle-bg); }
 .math { font-family: "Latin Modern Math", "STIX Two Math", serif; }
 .math-display { text-align: center; margin: 1em 0; overflow-x: auto; }
 
-/* Code colors: syntect's, or the terminal theme's whole look. The pre keeps our own background/border. */
+/* Code colors: GitHub's (Primer's "prettylights"), mapping syntect's scopes the way GitHub does. */
+.hl-comment, .hl-punctuation.hl-definition.hl-comment { color: var(--hl-comment); }
+.hl-keyword, .hl-storage { color: var(--hl-keyword); }
+.hl-string { color: var(--hl-string); }
+.hl-constant, .hl-support, .hl-variable.hl-language, .hl-entity.hl-other.hl-attribute-name, .hl-markup.hl-heading { color: var(--hl-constant); }
+.hl-entity.hl-name, .hl-entity.hl-other.hl-inherited-class { color: var(--hl-entity); }
+.hl-entity.hl-name.hl-tag { color: var(--hl-tag); }
+.hl-variable.hl-parameter, .hl-variable.hl-other.hl-member { color: var(--hl-variable); }
+.hl-string .hl-constant.hl-character.hl-escape { color: var(--hl-tag); }
+.hl-markup.hl-inserted { color: var(--hl-inserted); }
+.hl-markup.hl-deleted, .hl-invalid { color: var(--hl-deleted); }
+.hl-markup.hl-heading, .hl-markup.hl-bold { font-weight: bold; }
+.hl-markup.hl-italic { font-style: italic; }
+
+/* The terminal theme's colors and font, for --theme terminal. */
 {{theme_css}}
-pre.hl-code { background: var(--subtle-bg) !important; }
 
 pre > .copy {
   position: absolute; top: 4px; right: 8px;
@@ -133,8 +173,9 @@ pre[data-lang]:hover::before { visibility: hidden; }
 window.tmdview = { pending: [], ready(promise) { this.pending.push(promise); } };
 </script>
 {{plugins}}<script>
-// A copy button on each code block. Plugin blocks are skipped: their plugin replaces them.
-document.querySelectorAll("pre:not(.tmdview-plugin)").forEach(pre => {
+// A copy button on each code block. This runs after the plugins, so blocks a plugin drew
+// over (a diagram, a card) have lost their <code> and get none; ones it only colored keep it.
+document.querySelectorAll("pre:has(> code)").forEach(pre => {
   const btn = document.createElement("button");
   const icon = '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/></svg>';
   btn.className = "copy";

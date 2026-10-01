@@ -4,8 +4,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use pulldown_cmark::{html, CodeBlockKind, CowStr, Event, MetadataBlockKind, Options, Parser, Tag, TagEnd};
-use syntect::highlighting::ThemeSet;
-use syntect::html::{css_for_theme_with_class_style, ClassStyle, ClassedHTMLGenerator};
+use syntect::html::{ClassStyle, ClassedHTMLGenerator};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
@@ -16,20 +15,15 @@ const CLASS_STYLE: ClassStyle = ClassStyle::SpacedPrefixed { prefix: "hl-" };
 
 pub struct Renderer {
     syntaxes: SyntaxSet,
-    /// Code colors, or the whole look for `--theme terminal`.
+    /// The terminal's colors and font for `--theme terminal`, or nothing.
     theme_css: String,
     plugins: Vec<Loaded>,
 }
 
 impl Renderer {
-    /// `theme_css`, from `--theme terminal`, replaces syntect's code colors and
-    /// overrides the page's colors and fonts.
-    pub fn new(plugins: Vec<Loaded>, theme_css: Option<String>) -> anyhow::Result<Self> {
-        let theme_css = match theme_css {
-            Some(css) => css,
-            None => syntect_css()?,
-        };
-        Ok(Self { syntaxes: SyntaxSet::load_defaults_newlines(), theme_css, plugins })
+    /// `theme_css`, from `--theme terminal`, overrides the page's colors and fonts.
+    pub fn new(plugins: Vec<Loaded>, theme_css: Option<String>) -> Self {
+        Self { syntaxes: SyntaxSet::load_defaults_newlines(), theme_css: theme_css.unwrap_or_default(), plugins }
     }
 
     /// Render `markdown` into a full HTML page. `base_dir` is used so relative
@@ -210,18 +204,6 @@ impl Renderer {
     }
 }
 
-/// syntect's code colors for both themes: light by default, dark when the page is dark.
-fn syntect_css() -> anyhow::Result<String> {
-    let themes = ThemeSet::load_defaults();
-    let light = css_for_theme_with_class_style(&themes.themes["InspiredGitHub"], CLASS_STYLE)?;
-    let dark = css_for_theme_with_class_style(&themes.themes["base16-ocean.dark"], CLASS_STYLE)?;
-    Ok(format!(
-        "{light}\n@media (prefers-color-scheme: dark) {{\n{}\n}}\n{}\n",
-        scope_css(&dark, ":root:not([data-theme=\"light\"])"),
-        scope_css(&dark, ":root[data-theme=\"dark\"]"),
-    ))
-}
-
 /// A heading's trailing `{#id .class key=value key="a value"}`.
 struct HeadingAttrs {
     id: Option<String>,
@@ -340,21 +322,6 @@ fn label(lang: &str) -> String {
     if lang.is_empty() { String::new() } else { format!(" data-lang=\"{}\"", escape(lang)) }
 }
 
-/// Prefix every selector in syntect's generated CSS with `scope`.
-fn scope_css(css: &str, scope: &str) -> String {
-    css.lines()
-        .map(|line| match line.split_once('{') {
-            Some((selectors, rest)) if line.trim_start().starts_with('.') => {
-                let scoped: Vec<String> =
-                    selectors.split(',').map(|s| format!("{scope} {}", s.trim())).collect();
-                format!("{} {{{rest}", scoped.join(", "))
-            }
-            _ => line.to_string(),
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// A table cell's contents, kept on one line when they have no spaces, like an ID, a
 /// date or a version. Otherwise a narrow column breaks `D-01` after the hyphen.
 fn no_wrap(inner: Vec<Event>) -> Vec<Event> {
@@ -436,7 +403,7 @@ mod tests {
     use super::*;
 
     fn body(md: &str) -> String {
-        Renderer::new(Vec::new(), None).unwrap().render_body(md).html
+        Renderer::new(Vec::new(), None).render_body(md).html
     }
 
     #[test]
@@ -447,7 +414,7 @@ mod tests {
 
     #[test]
     fn plugin_claims_blocks_and_adds_its_assets_once() {
-        let renderer = Renderer::new(vec![plugin("mermaid", &["mermaid"], false)], None).unwrap();
+        let renderer = Renderer::new(vec![plugin("mermaid", &["mermaid"], false)], None);
         let md = "```mermaid\ngraph LR; a-->b\n```\n\n```mermaid\ngraph TD; c-->d\n```\n";
         let page = renderer.render(md, "t", Path::new("/"), "auto");
         let block = r#"<pre class="tmdview-plugin" data-plugin="mermaid" data-lang="mermaid"><code>graph LR; a--&gt;b"#;
@@ -459,14 +426,14 @@ mod tests {
 
     #[test]
     fn plugins_skip_pages_without_their_blocks() {
-        let renderer = Renderer::new(vec![plugin("mermaid", &["mermaid"], false)], None).unwrap();
+        let renderer = Renderer::new(vec![plugin("mermaid", &["mermaid"], false)], None);
         let page = renderer.render("# Hi\n", "t", Path::new("/"), "auto");
         assert!(!page.contains("mermaid script"));
     }
 
     #[test]
     fn claimed_languages_beat_syntect_and_fallback_only_takes_the_rest() {
-        let renderer = Renderer::new(vec![plugin("hl", &["python"], true)], None).unwrap();
+        let renderer = Renderer::new(vec![plugin("hl", &["python"], true)], None);
         let html = renderer.render_body("```python\nx\n```\n\n```rust\nfn f() {}\n```\n\n```zig\nx\n```\n\n```\nx\n```\n").html;
         assert!(html.contains(r#"data-plugin="hl" data-lang="python""#), "{html}");
         assert!(html.contains(r#"class="hl-code" data-lang="rust""#), "{html}");
@@ -540,7 +507,7 @@ mod tests {
     fn front_matter_reaches_the_page_and_the_plugins_that_want_it() {
         let mut mts = plugin("mts", &[], false);
         mts.front_matter_keys = vec!["eyebrow".into()];
-        let renderer = Renderer::new(vec![mts, plugin("other", &[], false)], None).unwrap();
+        let renderer = Renderer::new(vec![mts, plugin("other", &[], false)], None);
         let md = "---\ntitle: A </script> B\neyebrow: Spec\nmeta:\n  eyebrow: nested\n---\n\n# Hi\n";
         let page = renderer.render(md, "t", Path::new("/"), "auto");
         let script = r#"<script type="application/json" id="tmdview-front-matter">{"format":"yaml","source":"title: A \u003c/script> B\neyebrow: Spec"#;
@@ -560,7 +527,7 @@ mod tests {
 
     #[test]
     fn plugin_blocks_keep_the_rest_of_the_info_string() {
-        let renderer = Renderer::new(vec![plugin("mts", &["kpi"], false)], None).unwrap();
+        let renderer = Renderer::new(vec![plugin("mts", &["kpi"], false)], None);
         let html = renderer.render_body("```kpi {fill=1,3}\n| a | 1 |\n```\n").html;
         assert!(html.contains(r#"data-plugin="mts" data-lang="kpi" data-info="{fill=1,3}">"#), "{html}");
     }

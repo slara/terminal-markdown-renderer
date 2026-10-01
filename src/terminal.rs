@@ -1,5 +1,5 @@
 //! The terminal's own look, for `--theme terminal`: its background and text colors
-//! and, where the terminal tells us, its font. Links, highlights and code take GitHub's
+//! and, where the terminal tells us, its font. Links, highlights and code keep the page's GitHub
 //! colors, Dark or Light to match the background.
 //!
 //! Colors come from asking the terminal itself (OSC 10 and 11), which any modern
@@ -102,8 +102,7 @@ impl Style {
         if self.is_dark() { "dark" } else { "light" }
     }
 
-    /// CSS that sets the page's background, text and font from the terminal, and its
-    /// accents from GitHub, in place of syntect's code colors.
+    /// CSS that sets the page's background, text and font from the terminal.
     pub fn css(&self) -> String {
         let (bg, fg) = (self.bg, self.fg);
         let font = match &self.font {
@@ -119,63 +118,21 @@ impl Style {
   --subtle-bg: {subtle};
   --quote: {muted};
   --font: {font}var(--mono);
-{accents}}}
+}}
 {CSS}"#,
             bg = bg.hex(),
             fg = fg.hex(),
             muted = fg.mix(bg, 0.4).hex(),
             border = fg.mix(bg, 0.75).hex(),
             subtle = bg.mix(fg, 0.06).hex(),
-            accents = if self.is_dark() { GITHUB_DARK } else { GITHUB_LIGHT },
         )
     }
 }
 
-/// GitHub Dark's link, highlight and code colors (Primer's "prettylights").
-const GITHUB_DARK: &str = "  --link: #4493f8;
-  --mark: #bb800926;
-  --hl-comment: #8b949e;
-  --hl-keyword: #ff7b72;
-  --hl-string: #a5d6ff;
-  --hl-constant: #79c0ff;
-  --hl-entity: #d2a8ff;
-  --hl-tag: #7ee787;
-  --hl-variable: #ffa657;
-  --hl-inserted: #aff5b4;
-  --hl-deleted: #ffdcd7;
-";
-
-/// GitHub Light's, for a terminal with a light background.
-const GITHUB_LIGHT: &str = "  --link: #0969da;
-  --mark: #fff8c5;
-  --hl-comment: #59636e;
-  --hl-keyword: #cf222e;
-  --hl-string: #0a3069;
-  --hl-constant: #0550ae;
-  --hl-entity: #8250df;
-  --hl-tag: #116329;
-  --hl-variable: #953800;
-  --hl-inserted: #116329;
-  --hl-deleted: #82071e;
-";
-
-/// The part of the terminal theme that doesn't depend on the terminal: the code font
-/// and how code scopes map to the accent variables, as GitHub maps them.
+/// The part of the terminal theme that doesn't depend on the terminal. Links,
+/// highlights and code keep the page's GitHub colors, Dark or Light from `data-theme`.
 const CSS: &str = r#"/* Text keeps GitHub's type; code takes the terminal's font. */
 code, pre, kbd { font-family: var(--font); }
-.hl-comment, .hl-punctuation.hl-definition.hl-comment { color: var(--hl-comment); }
-.hl-keyword, .hl-storage { color: var(--hl-keyword); }
-.hl-string { color: var(--hl-string); }
-.hl-constant, .hl-support, .hl-variable.hl-language, .hl-entity.hl-other.hl-attribute-name, .hl-markup.hl-heading { color: var(--hl-constant); }
-.hl-entity.hl-name, .hl-entity.hl-other.hl-inherited-class { color: var(--hl-entity); }
-.hl-entity.hl-name.hl-tag { color: var(--hl-tag); }
-.hl-variable.hl-parameter, .hl-variable.hl-other.hl-member { color: var(--hl-variable); }
-.hl-string .hl-constant.hl-character.hl-escape { color: var(--hl-tag); }
-.hl-markup.hl-inserted { color: var(--hl-inserted); }
-.hl-markup.hl-deleted, .hl-invalid { color: var(--hl-deleted); }
-.hl-markup.hl-heading { font-weight: bold; }
-.hl-markup.hl-bold { font-weight: bold; }
-.hl-markup.hl-italic { font-style: italic; }
 "#;
 
 /// Keep a font name from ending the CSS string it goes in or the `<style>` tag, and from
@@ -319,15 +276,14 @@ mod tests {
     }
 
     #[test]
-    fn css_uses_the_terminal_colors_github_accents_and_a_safe_font_name() {
+    fn css_uses_the_terminal_colors_and_a_safe_font_name() {
         let dark = Style { bg: Rgb(0x22, 0x22, 0x22), fg: Rgb(0xc5, 0xc8, 0xc6), font: Some("Evil\"</style>".into()) };
         assert!(dark.is_dark());
         let css = dark.css();
         assert!(css.contains("--bg: #222222;"), "{css}");
-        assert!(css.contains("--link: #4493f8;"), "GitHub Dark's link blue: {css}");
         assert!(css.contains("--font: \"Evil/style\", var(--mono);"), "{css}");
         let light = Style { bg: Rgb(0xff, 0xff, 0xff), fg: Rgb(0x1f, 0x23, 0x28), font: None };
-        assert!(light.css().contains("--link: #0969da;"), "GitHub Light's on a light background");
+        assert_eq!(light.scheme(), "light", "so the page takes GitHub Light's colors");
     }
 
     #[test]

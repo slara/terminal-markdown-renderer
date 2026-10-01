@@ -6,6 +6,11 @@
 
 - A copy button on each code block. It shows on hover and says "Copied" once the code is on the clipboard.
 
+### Changed
+
+- Code is colored with GitHub's light and dark colors, like the `highlight` plugin already did, instead of `InspiredGitHub` and `base16-ocean.dark`.
+- Code blocks the `highlight` plugin colors get the copy button too.
+
 ## 0.5.0 — 2026-10-01
 
 ### Changed

@@ -152,12 +152,11 @@ Before the main pass, tmdview reads all of these custom IDs, so a generated ID n
 ### Syntax colors and themes
 
 syntect writes CSS classes (prefixed `hl-`) into the HTML, not inline colors, so the code's colors can change with the page theme.
-The page has 2 sets of code colors:
+The colors are GitHub's (Primer's "prettylights"), the same ones the `highlight` plugin uses for highlight.js, so code looks the same whichever of the two colors it.
+`template.html` sets them as `--hl-*` variables next to the page's other colors, GitHub Light by default and GitHub Dark when the page is dark, and maps syntect's scopes to them the way GitHub does.
+syntect only parses, so tmdview doesn't build in its themes.
 
-- `InspiredGitHub` for light mode
-- `base16-ocean.dark` for dark mode
-
-The dark rules sit under `:root[data-theme="dark"]` and under a `prefers-color-scheme: dark` media query.
+The dark variables sit under `:root[data-theme="dark"]` and under a `prefers-color-scheme: dark` media query.
 `--theme light` or `--theme dark` sets `data-theme` on the `<html>` tag, which overrides the system setting.
 
 ### The terminal theme
@@ -170,9 +169,9 @@ The dark rules sit under `:root[data-theme="dark"]` and under a `prefers-color-s
 4. If there's still no background and foreground, tmdview says so and uses the `auto` theme.
 
 The page gets `data-theme="dark"` or `"light"`, from whether the background is darker than the text, so plugins pick the matching theme.
-The terminal CSS takes the place of syntect's code colors, after the page's own CSS, so tmdview doesn't build syntect's CSS at all.
-It sets the page's background, text and gray variables from the terminal's two colors, and the link, highlight and code colors from GitHub Dark or GitHub Light, whichever matches the background.
-The rest is fixed CSS in terms of those variables: it maps code scopes (comments, strings, keywords and so on) the way GitHub does, and sets code in the terminal font. Text keeps the page's GitHub fonts and sizes.
+The terminal CSS comes after the page's own CSS.
+It sets the page's background, text and gray variables from the terminal's two colors, and sets code in the terminal font. Text keeps the page's GitHub fonts and sizes.
+Links, highlights and code keep the page's GitHub colors, Dark or Light from `data-theme`, so they match the background.
 It doesn't use the terminal's ANSI palette: those colors are tuned for a terminal, and read loud on a page.
 
 The background watcher has no terminal to ask, so tmdview passes the colors it found to it as JSON, in the hidden `--terminal-style` flag.
