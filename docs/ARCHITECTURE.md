@@ -32,9 +32,9 @@ flowchart LR
 | File | Job |
 |---|---|
 | `src/main.rs` | Command-line flags, where the output goes, starting the background watcher, where messages go |
-| `src/config.rs` | `~/.config/tmdview/config.toml`: flag defaults, code colors, plugin settings |
+| `src/config.rs` | `~/.config/tmdview/config.toml`: flag defaults, plugin settings |
 | `src/watch.rs` | File change events with a polling fallback, and the loop that rebuilds and reloads |
-| `src/render.rs` | Markdown to a full HTML page, syntax colors, heading IDs, file URLs |
+| `src/render.rs` | Markdown to a full HTML page, which plugin takes each code block, heading IDs, file URLs |
 | `src/template.html` | Page layout, CSS for both themes, the script that keeps your scroll position |
 | `src/terminal.rs` | `--theme terminal`: asks the terminal for its colors, reads Ghostty's config, builds the matching CSS |
 | `src/browser.rs` | Runs the `terminal-browser` command and reads its JSON output |
@@ -105,9 +105,8 @@ A git plugin that fails to load is skipped with a warning, so it can't stop the 
 For each fenced code block, the renderer takes the first of these that applies:
 
 1. A plugin that claims the language.
-2. syntect.
-3. The fallback plugin, if the block has a language.
-4. Plain escaped text.
+2. The fallback plugin, if the block has a language.
+3. Plain escaped text.
 
 A claimed block becomes `<pre class="tmdview-plugin" data-plugin="<name>" data-lang="<lang>"><code>…</code></pre>`, plus `data-info` with the rest of the fence's info string, if there is any.
 
@@ -135,7 +134,7 @@ tmdview changes four kinds of events before turning the stream into HTML:
 
 | Event | What tmdview does |
 |---|---|
-| Code block | Collects the code, then colors it with [syntect](https://github.com/trishume/syntect). Unknown languages are shown plain and escaped. |
+| Code block | Collects the code and hands it to a plugin, or shows it plain and escaped. |
 | Heading | Turns the heading's text into an ID, so `## How it works` gets `id="how-it-works"`. Repeats get `-1`, `-2` and so on. Reads trailing `{…}` attributes itself (see below). |
 | Table cell | Wraps a cell with no spaces, like `D-01` or a date, in `<span class="nowrap">`, so a narrow column doesn't break it after a hyphen. |
 | Math | Wraps `$...$` in `<span class="math">` and `$$...$$` in `<div class="math">`, without typesetting. |
@@ -150,15 +149,11 @@ Without that, the block would show up as a line, a paragraph and a heading.
 A heading can also set its own ID, like `# Intro {#intro}`.
 Before the main pass, tmdview reads all of these custom IDs, so a generated ID never takes one of them.
 
-### Syntax colors and themes
+### Code colors and themes
 
-syntect writes CSS classes (prefixed `hl-`) into the HTML, not inline colors, so the code's colors can change with the page theme.
-The colors are GitHub's (Primer's "prettylights"), the same ones the `highlight` plugin uses for highlight.js, so code looks the same whichever of the two colors it.
-`template.html` sets them as `--hl-*` variables next to the page's other colors, GitHub Light by default and GitHub Dark when the page is dark, and maps syntect's scopes to them the way GitHub does.
-syntect only parses, so tmdview doesn't build in its themes.
+tmdview doesn't color code. The fallback plugin does: `tmdview-highlight` runs highlight.js in the page, with its own light and dark CSS, so code changes with the page theme.
+Leaving it to a plugin keeps the binary small (syntect and its grammars were half of it) and lets one stylesheet cover every block, in whichever theme the user picks.
 
-The dark variables sit under `:root[data-theme="dark"]` and under a `prefers-color-scheme: dark` media query.
-The config file's `[colors.light]` and `[colors.dark]` set the same variables again, under the same selectors, after the template's CSS.
 `--theme light` or `--theme dark` sets `data-theme` on the `<html>` tag, which overrides the system setting.
 
 ### The terminal theme
@@ -309,7 +304,7 @@ It restores on the `load` event, after images have loaded, so the page is tall e
 | OS file events, watching the folder | No CPU while idle, and a save shows up at once, whatever way the editor saves | Adds `notify`. Filesystems without events need `--poll` |
 | Always reload on save, from a background process | Saving is all you do. The shell is free right away | A process that lives until you close the tab, up to 10 seconds after |
 | Open a `file://` page, no local web server | Nothing to start, stop or secure | The page can't push its own updates, so tmdview has to reload it |
-| CSS classes for code colors | One page works in both themes | Slightly bigger HTML, since both themes' CSS is included |
+| Code colored by a plugin in the page | One tool colors every language, in the user's theme, and the binary stays small | Without the plugin, code is plain text |
 | One self-contained HTML file | Works offline, easy to save with `-o` | Plugins inline their whole library, so a Mermaid page is about 5.5 MB |
 | Plugins are downloaded, not in the repo | A git install stays small, and you only get what you use | One network step per plugin, and it needs `curl` installed |
 | Installed means on | Nothing to enable per run, since scripts only go into pages that need them | Use `--no-plugins` to turn them off for one run |
@@ -327,14 +322,14 @@ It restores on the `load` event, after images have loaded, so the page is tall e
 
 ## Tests
 
-`cargo test` runs 32 tests. They cover:
+`cargo test` runs 34 tests. They cover:
 
 - heading IDs, including duplicates and custom `{#id}`s
-- syntax colors, and plain output for unknown languages
+- plain, escaped output for code no plugin takes
 - tables, task lists and strikethrough, front matter, and table cells kept on one line
 - heading attributes with quoted values, front matter in the page and its keys, and the plugins it adds, `data-info` on plugin blocks
 - percent-encoding and decoding of file paths
-- plugins: claimed blocks, files added once, pages without claimed blocks left alone, and the claim order (claimed language, syntect, fallback, plain)
+- plugins: claimed blocks, files added once, pages without claimed blocks left alone, and the claim order (claimed language, fallback, plain)
 - conflicts between plugins, escaping `</script` in inlined files, and the `data:` URL for risky scripts
 - git plugins: GitHub shorthand, plugin names, and manifest files that try to leave the repository
 - parsing the background watcher's `--attach` list

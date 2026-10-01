@@ -50,7 +50,7 @@ pub enum Action {
 /// An installed plugin, read into memory and ready to inline.
 pub struct Loaded {
     pub name: String,
-    /// Fenced code block languages it takes over, even ones tmdview can highlight.
+    /// Fenced code block languages it takes over, ahead of the fallback plugin.
     pub languages: Vec<String>,
     /// Also takes blocks whose language nothing else handles.
     pub fallback: bool,

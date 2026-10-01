@@ -181,7 +181,7 @@ fn main() -> Result<()> {
         scheme: terminal.as_ref().map_or(theme.as_str(), terminal::Style::scheme),
         renderer: Renderer::new(
             plugins,
-            terminal.as_ref().map_or_else(String::new, terminal::Style::css) + &config.colors_css(),
+            terminal.as_ref().map_or_else(String::new, terminal::Style::css),
             config.plugins_json(),
         ),
     };

@@ -42,10 +42,9 @@ scripts = ["vendor/d2.min.js", "init.js"]    # inlined in <script> tags, in orde
 
 For each fenced code block, tmdview uses the first of these that applies:
 
-1. A plugin that lists the block's language in `languages`. This also works for languages tmdview can color itself.
-2. tmdview's own syntax colors.
-3. The plugin with `fallback = true`, for any block that has a language.
-4. Plain text.
+1. A plugin that lists the block's language in `languages`.
+2. The plugin with `fallback = true`, for any block that has a language. tmdview doesn't color code itself, so this is the plugin that does, like `tmdview-highlight`.
+3. Plain text.
 
 Two installed plugins can't claim the same language, and only one plugin can be the fallback.
 `install` and `update` refuse a plugin that would break either rule.
@@ -123,7 +122,6 @@ const dark = forced ? forced === "dark" : matchMedia("(prefers-color-scheme: dar
 ```
 
 To match the page, use its CSS variables on `:root`, such as `--fg`, `--bg`, `--subtle-bg`, `--border` and `--link`.
-Code colors are `--hl-comment`, `--hl-keyword`, `--hl-string`, `--hl-constant`, `--hl-entity`, `--hl-tag`, `--hl-variable`, `--hl-inserted` and `--hl-deleted`, so a plugin that colors code can follow the user's `[colors]`.
 
 ## Settings
 

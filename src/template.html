@@ -15,15 +15,6 @@
   --link: #0969da;
   --mark: #fff8c5;
   --quote: #59636e;
-  --hl-comment: #59636e;
-  --hl-keyword: #cf222e;
-  --hl-string: #0a3069;
-  --hl-constant: #0550ae;
-  --hl-entity: #8250df;
-  --hl-tag: #116329;
-  --hl-variable: #953800;
-  --hl-inserted: #116329;
-  --hl-deleted: #82071e;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   color-scheme: light;
 }
@@ -37,15 +28,6 @@
     --link: #4493f8;
     --mark: #bb800926;
     --quote: #9198a1;
-    --hl-comment: #8b949e;
-    --hl-keyword: #ff7b72;
-    --hl-string: #a5d6ff;
-    --hl-constant: #79c0ff;
-    --hl-entity: #d2a8ff;
-    --hl-tag: #7ee787;
-    --hl-variable: #ffa657;
-    --hl-inserted: #aff5b4;
-    --hl-deleted: #ffdcd7;
     color-scheme: dark;
   }
 }
@@ -58,15 +40,6 @@
   --link: #4493f8;
   --mark: #bb800926;
   --quote: #9198a1;
-  --hl-comment: #8b949e;
-  --hl-keyword: #ff7b72;
-  --hl-string: #a5d6ff;
-  --hl-constant: #79c0ff;
-  --hl-entity: #d2a8ff;
-  --hl-tag: #7ee787;
-  --hl-variable: #ffa657;
-  --hl-inserted: #aff5b4;
-  --hl-deleted: #ffdcd7;
   color-scheme: dark;
 }
 
@@ -136,19 +109,7 @@ tr:nth-child(2n) td { background: var(--subtle-bg); }
 .math { font-family: "Latin Modern Math", "STIX Two Math", serif; }
 .math-display { text-align: center; margin: 1em 0; overflow-x: auto; }
 
-/* Code colors: GitHub's (Primer's "prettylights"), mapping syntect's scopes the way GitHub does. */
-.hl-comment, .hl-punctuation.hl-definition.hl-comment { color: var(--hl-comment); }
-.hl-keyword, .hl-storage { color: var(--hl-keyword); }
-.hl-string { color: var(--hl-string); }
-.hl-constant, .hl-support, .hl-variable.hl-language, .hl-entity.hl-other.hl-attribute-name, .hl-markup.hl-heading { color: var(--hl-constant); }
-.hl-entity.hl-name, .hl-entity.hl-other.hl-inherited-class { color: var(--hl-entity); }
-.hl-entity.hl-name.hl-tag { color: var(--hl-tag); }
-.hl-variable.hl-parameter, .hl-variable.hl-other.hl-member { color: var(--hl-variable); }
-.hl-string .hl-constant.hl-character.hl-escape { color: var(--hl-tag); }
-.hl-markup.hl-inserted { color: var(--hl-inserted); }
-.hl-markup.hl-deleted, .hl-invalid { color: var(--hl-deleted); }
-.hl-markup.hl-heading, .hl-markup.hl-bold { font-weight: bold; }
-.hl-markup.hl-italic { font-style: italic; }
+/* Code colors come from the fallback plugin, tmdview-highlight. */
 
 /* The terminal theme's colors and font, for --theme terminal. */
 {{theme_css}}

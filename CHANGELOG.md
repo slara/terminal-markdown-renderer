@@ -4,14 +4,13 @@
 
 ### Added
 
-- A config file, `~/.config/tmdview/config.toml`, for flag defaults (`theme`, `split`, `size`, `watch`, `poll`), code colors (`[colors.light]`, `[colors.dark]`) and plugin settings (`[plugins.<name>]`, which a plugin reads as `tmdview.config.<name>`). Mermaid passes its settings to `mermaid.initialize`.
+- A config file, `~/.config/tmdview/config.toml`, for flag defaults (`theme`, `split`, `size`, `watch`, `poll`) and plugin settings (`[plugins.<name>]`, which a plugin reads as `tmdview.config.<name>`). Mermaid passes its settings to `mermaid.initialize`.
 
 - A copy button on each code block. It shows on hover and says "Copied" once the code is on the clipboard.
 
 ### Changed
 
-- Code is colored with GitHub's light and dark colors, like the `highlight` plugin already did, instead of `InspiredGitHub` and `base16-ocean.dark`.
-- Code blocks the `highlight` plugin colors get the copy button too.
+- tmdview no longer colors code itself: the `highlight` plugin (0.3.0 or newer) colors every block, in a theme you pick under `[plugins.highlight]`. Without it, code is plain text. The binary is half the size, without syntect.
 
 ## 0.5.0 — 2026-10-01
 

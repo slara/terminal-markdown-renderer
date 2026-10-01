@@ -4,19 +4,13 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use pulldown_cmark::{html, CodeBlockKind, CowStr, Event, MetadataBlockKind, Options, Parser, Tag, TagEnd};
-use syntect::html::{ClassStyle, ClassedHTMLGenerator};
-use syntect::parsing::SyntaxSet;
-use syntect::util::LinesWithEndings;
 
 use crate::plugins::Loaded;
 
 const TEMPLATE: &str = include_str!("template.html");
-const CLASS_STYLE: ClassStyle = ClassStyle::SpacedPrefixed { prefix: "hl-" };
 
 pub struct Renderer {
-    syntaxes: SyntaxSet,
-    /// The terminal's colors and font for `--theme terminal`, and the config file's
-    /// code colors.
+    /// The terminal's colors and font for `--theme terminal`.
     theme_css: String,
     /// The config file's plugin tables, as a JSON object.
     plugin_config: String,
@@ -27,7 +21,7 @@ impl Renderer {
     /// `theme_css` overrides the page's colors and fonts. `plugin_config` reaches the
     /// page's scripts as `tmdview.config`.
     pub fn new(plugins: Vec<Loaded>, theme_css: String, plugin_config: String) -> Self {
-        Self { syntaxes: SyntaxSet::load_defaults_newlines(), theme_css, plugin_config, plugins }
+        Self { theme_css, plugin_config, plugins }
     }
 
     /// Render `markdown` into a full HTML page. `base_dir` is used so relative
@@ -174,15 +168,10 @@ impl Renderer {
         Body { html: out, used, front_matter }
     }
 
-    /// A fenced code block. In order: a plugin that claims its language, syntect,
-    /// a fallback plugin, then plain escaped text. Records which plugin it used.
+    /// A fenced code block. In order: a plugin that claims its language, a fallback
+    /// plugin, which colors code, then plain escaped text. Records which plugin it used.
     fn code_block(&self, lang: &str, info: &str, src: &str, used: &mut Vec<usize>) -> String {
         let claimed = self.plugins.iter().position(|p| p.claims(lang));
-        if claimed.is_none()
-            && let Some(html) = self.highlight(lang, src)
-        {
-            return html;
-        }
         let fallback = || (!lang.is_empty()).then(|| self.plugins.iter().position(|p| p.fallback)).flatten();
         let label = label(lang);
         match claimed.or_else(fallback) {
@@ -197,16 +186,6 @@ impl Renderer {
             }
             None => format!("<pre{label}><code>{}</code></pre>\n", escape(src)),
         }
-    }
-
-    /// Syntax-colored HTML, or `None` if syntect doesn't know the language.
-    fn highlight(&self, lang: &str, src: &str) -> Option<String> {
-        let syntax = (!lang.is_empty()).then(|| self.syntaxes.find_syntax_by_token(lang)).flatten()?;
-        let mut generator = ClassedHTMLGenerator::new_with_class_style(syntax, &self.syntaxes, CLASS_STYLE);
-        for line in LinesWithEndings::from(src) {
-            generator.parse_html_for_line_which_includes_newline(line).ok()?;
-        }
-        Some(format!("<pre class=\"hl-code\"{}><code>{}</code></pre>\n", label(lang), generator.finalize()))
     }
 }
 
@@ -438,12 +417,12 @@ mod tests {
     }
 
     #[test]
-    fn claimed_languages_beat_syntect_and_fallback_only_takes_the_rest() {
-        let renderer = Renderer::new(vec![plugin("hl", &["python"], true)], String::new(), "{}".into());
-        let html = renderer.render_body("```python\nx\n```\n\n```rust\nfn f() {}\n```\n\n```zig\nx\n```\n\n```\nx\n```\n").html;
-        assert!(html.contains(r#"data-plugin="hl" data-lang="python""#), "{html}");
-        assert!(html.contains(r#"class="hl-code" data-lang="rust""#), "{html}");
-        assert!(html.contains(r#"data-plugin="hl" data-lang="zig""#), "{html}");
+    fn claimed_languages_beat_the_fallback_which_takes_the_rest() {
+        let renderer =
+            Renderer::new(vec![plugin("kpi", &["kpi"], false), plugin("hl", &[], true)], String::new(), "{}".into());
+        let html = renderer.render_body("```kpi\nx\n```\n\n```rust\nfn f() {}\n```\n\n```\nx\n```\n").html;
+        assert!(html.contains(r#"data-plugin="kpi" data-lang="kpi""#), "{html}");
+        assert!(html.contains(r#"data-plugin="hl" data-lang="rust""#), "{html}");
         assert!(html.contains("<pre><code>x\n</code></pre>"), "a block with no language stays plain: {html}");
     }
 
@@ -478,14 +457,7 @@ mod tests {
     }
 
     #[test]
-    fn code_blocks_are_highlighted() {
-        let html = body("```rust\nfn main() {}\n```\n");
-        assert!(html.contains(r#"class="hl-code" data-lang="rust""#), "{html}");
-        assert!(html.contains("hl-"), "{html}");
-    }
-
-    #[test]
-    fn unknown_language_is_escaped_plain() {
+    fn code_without_a_plugin_is_escaped_plain() {
         let html = body("```nope\n<b>\n```\n");
         assert!(html.contains("<pre data-lang=\"nope\"><code>&lt;b&gt;\n</code></pre>"), "{html}");
     }

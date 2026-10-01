@@ -49,7 +49,7 @@ tmdview plugins install mermaid       # draw ```mermaid blocks as diagrams from 
 
 ## Config file
 
-`~/.config/tmdview/config.toml` (or `$XDG_CONFIG_HOME/tmdview/config.toml`) sets defaults for the flags, the code colors and plugin settings.
+`~/.config/tmdview/config.toml` (or `$XDG_CONFIG_HOME/tmdview/config.toml`) sets defaults for the flags and plugin settings.
 Every part is optional, and a flag on the command line wins over the file.
 
 ```toml
@@ -59,16 +59,11 @@ size = 0.5
 watch = true
 poll = false
 
-# Code colors, over GitHub's. Names: comment, keyword, string, constant,
-# entity, tag, variable, inserted, deleted.
-[colors.light]
-keyword = "#cf222e"
+# Each plugin's settings.
+[plugins.highlight]
+theme = "catppuccin"   # code colors: github, catppuccin, atom-one or tokyo-night
 
-[colors.dark]
-keyword = "#ff7b72"
-
-# Each plugin's settings. Mermaid passes them to mermaid.initialize.
-[plugins.mermaid]
+[plugins.mermaid]      # passed to mermaid.initialize
 theme = "forest"
 ```
 
@@ -77,7 +72,7 @@ A typo or a value that isn't valid stops tmdview with a message that names the f
 ## What it renders
 
 - GitHub-flavored Markdown: tables, task lists, footnotes, strikethrough
-- Code blocks with syntax colors, in light and dark themes
+- Code blocks, with syntax colors from the [`highlight`](https://github.com/slara/tmdview-highlight) plugin, in light and dark themes
 - Links to headings (`#usage`), including headings you give a custom `{#id}`
 - Relative links and images, resolved from the Markdown file's folder
 - Front matter (`---` YAML or `+++` TOML at the top) is left out of the page
@@ -86,7 +81,7 @@ Math is recognized but shown as plain text, not typeset.
 
 ## Matching your terminal
 
-`--theme terminal` makes the page look like part of the terminal: its background and text color, with GitHub's link and code colors on top (GitHub Dark on a dark background, GitHub Light on a light one).
+`--theme terminal` makes the page look like part of the terminal: its background and text color, with GitHub's link colors on top (GitHub Dark on a dark background, GitHub Light on a light one). Code takes the `highlight` plugin's theme, in its dark or light version to match.
 tmdview asks the terminal for its colors when it starts, so this works in most modern terminals.
 Anything the terminal doesn't answer comes from Ghostty's config, when you run tmdview in Ghostty.
 
@@ -111,9 +106,9 @@ tmdview plugins remove highlight
 | Plugin | What it does | Cost |
 |---|---|---|
 | `mermaid` (built in) | Draws ` ```mermaid ` blocks as diagrams, in the page's light or dark theme | A 5.5 MB download, added only to pages that have a diagram |
-| [`slara/tmdview-highlight`](https://github.com/slara/tmdview-highlight) | Colors languages tmdview can't, such as TypeScript, Kotlin and Dockerfile, with highlight.js | About 140 KB, added only to pages that need it |
+| [`slara/tmdview-highlight`](https://github.com/slara/tmdview-highlight) | Colors code with highlight.js, in GitHub, Catppuccin, Atom One or Tokyo Night colors. Without it, code is plain text | About 220 KB, added only to pages with code |
 
-![The highlight plugin coloring TypeScript, Kotlin and Dockerfile blocks beside the Markdown source](docs/screenshot-highlight.png)
+![The highlight plugin coloring code blocks beside the Markdown source](docs/screenshot-highlight.png)
 
 tmdview pins each built-in plugin with a SHA-256 checksum, and `install` rejects a download that doesn't match.
 
