@@ -1,23 +1,18 @@
 //! Built-in plugins: a pinned library download plus a start-up script kept here.
 
 use std::fs;
-use std::io::Read;
 use std::path::PathBuf;
+use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 
 use super::Loaded;
 
-#[derive(Clone, Copy)]
-pub enum Builtin {
-    Mermaid,
-}
-
 /// A pinned download. Bump `version`, `url` and `sha256` together.
-struct Spec {
-    name: &'static str,
-    version: &'static str,
+pub struct Builtin {
+    pub name: &'static str,
+    pub version: &'static str,
     url: &'static str,
     sha256: &'static str,
     file: &'static str,
@@ -25,7 +20,7 @@ struct Spec {
     init: &'static str,
 }
 
-const MERMAID: Spec = Spec {
+const MERMAID: Builtin = Builtin {
     name: "mermaid",
     version: "12.0.0",
     url: "https://cdn.jsdelivr.net/npm/mermaid@12.0.0/dist/mermaid.min.js",
@@ -39,46 +34,31 @@ const MERMAID: Spec = Spec {
 const MAX_DOWNLOAD: u64 = 32 * 1024 * 1024;
 
 impl Builtin {
-    pub const ALL: [Builtin; 1] = [Builtin::Mermaid];
+    pub const ALL: &'static [Builtin] = &[MERMAID];
 
-    pub fn named(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|b| b.name() == name)
-    }
-
-    fn spec(self) -> &'static Spec {
-        match self {
-            Builtin::Mermaid => &MERMAID,
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        self.spec().name
-    }
-
-    pub fn version(self) -> &'static str {
-        self.spec().version
+    pub fn named(name: &str) -> Option<&'static Builtin> {
+        Self::ALL.iter().find(|b| b.name == name)
     }
 
     /// `<plugins>/<name>`, holding one folder per version.
-    fn root(self) -> Result<PathBuf> {
-        Ok(super::root()?.join(self.name()))
+    fn root(&self) -> Result<PathBuf> {
+        Ok(super::root()?.join(self.name))
     }
 
     /// Where the pinned version's library lives once installed.
-    fn path(self) -> Result<PathBuf> {
-        Ok(self.root()?.join(self.version()).join(self.spec().file))
+    fn path(&self) -> Result<PathBuf> {
+        Ok(self.root()?.join(self.version).join(self.file))
     }
 
-    pub fn is_installed(self) -> Result<bool> {
+    pub fn is_installed(&self) -> Result<bool> {
         Ok(self.path()?.is_file())
     }
 
     /// What this plugin would claim, without its library (for conflict checks).
-    pub fn claims(self) -> Loaded {
-        let spec = self.spec();
+    pub fn claims(&self) -> Loaded {
         Loaded {
-            name: spec.name.into(),
-            languages: spec.languages.iter().map(|l| l.to_string()).collect(),
+            name: self.name.into(),
+            languages: self.languages.iter().map(|l| l.to_string()).collect(),
             fallback: false,
             front_matter_keys: Vec::new(),
             scripts: Vec::new(),
@@ -87,35 +67,35 @@ impl Builtin {
     }
 
     /// The installed plugin, or `None` if the pinned version isn't installed.
-    pub fn load(self) -> Result<Option<Loaded>> {
+    pub fn load(&self) -> Result<Option<Loaded>> {
         let path = self.path()?;
         let library = match fs::read_to_string(&path) {
             Ok(library) => library,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(err) => return Err(err).with_context(|| format!("reading {}", path.display())),
         };
-        Ok(Some(Loaded { scripts: vec![library, self.spec().init.into()], ..self.claims() }))
+        Ok(Some(Loaded { scripts: vec![library, self.init.into()], ..self.claims() }))
     }
 
-    /// Download the pinned version, check its SHA-256, and save it. Returns its path.
-    pub fn install(self) -> Result<PathBuf> {
-        let spec = self.spec();
+    /// Download the pinned version with the user's own `curl`, check its SHA-256, and
+    /// save it. Returns its path.
+    pub fn install(&self) -> Result<PathBuf> {
         let path = self.path()?;
-        let mut body = Vec::new();
-        ureq::get(spec.url)
-            .call()
-            .with_context(|| format!("downloading {}", spec.url))?
-            .into_body()
-            .into_reader()
-            .take(MAX_DOWNLOAD + 1)
-            .read_to_end(&mut body)
-            .with_context(|| format!("downloading {}", spec.url))?;
+        let out = Command::new("curl")
+            .args(["-fsSL", "--max-filesize", &MAX_DOWNLOAD.to_string(), "--", self.url])
+            .output()
+            .context("running `curl` (is it installed?)")?;
+        if !out.status.success() {
+            bail!("downloading {}: {}", self.url, String::from_utf8_lossy(&out.stderr).trim());
+        }
+        let body = out.stdout;
+        // Servers that don't send a size get past --max-filesize on older curls.
         if body.len() as u64 > MAX_DOWNLOAD {
-            bail!("{} is bigger than {} MB; refusing it", spec.url, MAX_DOWNLOAD / 1024 / 1024);
+            bail!("{} is bigger than {} MB; refusing it", self.url, MAX_DOWNLOAD / 1024 / 1024);
         }
         let digest = hex(&Sha256::digest(&body));
-        if digest != spec.sha256 {
-            bail!("{} has the wrong checksum (expected {}, got {digest}); not installing it", spec.url, spec.sha256);
+        if digest != self.sha256 {
+            bail!("{} has the wrong checksum (expected {}, got {digest}); not installing it", self.url, self.sha256);
         }
         let dir = path.parent().expect("plugin path has a parent");
         fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
@@ -127,7 +107,7 @@ impl Builtin {
     }
 
     /// Delete every installed version. Returns false if nothing was installed.
-    pub fn remove(self) -> Result<bool> {
+    pub fn remove(&self) -> Result<bool> {
         let root = self.root()?;
         match fs::remove_dir_all(&root) {
             Ok(()) => Ok(true),

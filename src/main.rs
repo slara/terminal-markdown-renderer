@@ -96,17 +96,6 @@ enum Theme {
     Terminal,
 }
 
-impl Direction {
-    fn as_str(self) -> &'static str {
-        match self {
-            Direction::Right => "right",
-            Direction::Left => "left",
-            Direction::Down => "down",
-            Direction::Up => "up",
-        }
-    }
-}
-
 impl Theme {
     fn as_str(self) -> &'static str {
         match self {
@@ -203,7 +192,8 @@ fn main() -> Result<()> {
     }
     match cli.split {
         Some(direction) => {
-            browser::open_split(&output, direction.as_str(), cli.size)?;
+            let direction = direction.to_possible_value().expect("no skipped variants");
+            browser::open_split(&output, direction.get_name(), cli.size)?;
             if !cli.no_watch {
                 eprintln!("tmdview: reloading on every save; messages go to {}", watch::log_path(&page.output).display());
             }

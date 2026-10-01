@@ -398,17 +398,22 @@ fn unique_slug(text: &str, used: &mut HashSet<String>) -> String {
     candidate
 }
 
-/// `file://` URL for an absolute path, percent-encoding everything but unreserved chars and `/`.
+/// `file://` URL for an absolute path.
 pub fn file_url(path: &Path) -> String {
-    let mut url = String::from("file://");
-    for &b in path.to_string_lossy().as_bytes() {
+    format!("file://{}", percent_encode(path.to_string_lossy().as_bytes()))
+}
+
+/// Percent-encode everything but unreserved chars and `/`.
+pub fn percent_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len());
+    for &b in bytes {
         if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
-            url.push(b as char);
+            out.push(b as char);
         } else {
-            url.push_str(&format!("%{b:02X}"));
+            out.push_str(&format!("%{b:02X}"));
         }
     }
-    url
+    out
 }
 
 pub fn escape(s: &str) -> String {

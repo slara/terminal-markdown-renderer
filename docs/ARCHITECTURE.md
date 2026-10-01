@@ -48,7 +48,7 @@ Plugins are the one exception, and they're optional.
 
 A plugin is JavaScript and CSS that tmdview inlines into pages that have a code block it claims.
 There are 2 kinds, and both install into `<data folder>/tmdview/plugins/<name>/`.
-The data folder comes from the `dirs` crate.
+The data folder is `~/Library/Application Support` on macOS and `$XDG_DATA_HOME` (or `~/.local/share`) elsewhere.
 
 | Kind | Where it comes from | Example |
 |---|---|---|
@@ -61,8 +61,8 @@ Either way, a plugin becomes a `Loaded` value: its name, the languages it claims
 
 ### Built-in plugins
 
-Each built-in plugin has a `Spec` in `builtin.rs`: a name, a pinned version, a URL and a SHA-256 checksum, plus the languages it claims and a start-up script.
-`tmdview plugins install <name>` downloads the URL with `ureq`, checks the checksum, and saves the file to
+Each built-in plugin is a `Builtin` const in `builtin.rs`: a name, a pinned version, a URL and a SHA-256 checksum, plus the languages it claims and a start-up script.
+`tmdview plugins install <name>` downloads the URL with the user's `curl`, checks the checksum, and saves the file to
 `<plugins>/<name>/<version>/`.
 It writes a temp file and renames it, so a failed install never leaves a partial library.
 A download over 32 MB, or one with the wrong checksum, is rejected.
@@ -73,7 +73,7 @@ The version is part of the path, so when tmdview pins a new version, tmdview ign
 
 To bump a plugin, change `version`, `url` and `sha256` together.
 Get the checksum with `curl -sL <url> | shasum -a 256`.
-To add one, add a `Builtin` variant and its `Spec`.
+To add one, add a `Builtin` const and list it in `Builtin::ALL`.
 
 ### Git plugins
 
@@ -116,7 +116,7 @@ For YAML it finds those keys by reading the lines that start with `key:` at the 
 The renderer only adds a plugin's files when the page has at least one block the plugin claimed, so pages without diagrams stay small even with Mermaid installed.
 Before inlining, it rewrites `</script` as `<\/script` in scripts, and `</style` as `<\/style` in styles, so a file can't close its own tag.
 A script that contains both `<!--` and `<script` could still put the HTML parser in its "double-escaped" state, where even the real `</script>` doesn't end the tag and the rest of the page is swallowed.
-Rewriting those strings could break the code, so that rare script goes in as a base64 `data:` URL instead, which has no markup in it.
+Rewriting those strings could break the code, so that rare script goes in as a percent-encoded `data:` URL instead, which has no markup in it.
 
 The files go in at the `{{plugins}}` marker in `template.html`.
 tmdview splits the template at that marker before filling in the other placeholders.
@@ -310,7 +310,7 @@ It restores on the `load` event, after images have loaded, so the page is tall e
 | Open a `file://` page, no local web server | Nothing to start, stop or secure | The page can't push its own updates, so tmdview has to reload it |
 | CSS classes for code colors | One page works in both themes | Slightly bigger HTML, since both themes' CSS is included |
 | One self-contained HTML file | Works offline, easy to save with `-o` | Plugins inline their whole library, so a Mermaid page is about 5.5 MB |
-| Plugins are downloaded, not in the repo | A git install stays small, and you only get what you use | One network step per plugin, and `ureq` adds about 2 MB to the binary |
+| Plugins are downloaded, not in the repo | A git install stays small, and you only get what you use | One network step per plugin, and it needs `curl` installed |
 | Installed means on | Nothing to enable per run, since scripts only go into pages that need them | Use `--no-plugins` to turn them off for one run |
 | Git plugins use the `git` command | Private repositories and credentials work with no extra setup | Needs `git` installed, but only for git plugins |
 | Git plugins ask before installing | They run someone else's JavaScript in your pages | Scripts have to pass `--yes` |
@@ -334,7 +334,7 @@ It restores on the `load` event, after images have loaded, so the page is tall e
 - heading attributes with quoted values, front matter in the page and its keys, and the plugins it adds, `data-info` on plugin blocks
 - percent-encoding and decoding of file paths
 - plugins: claimed blocks, files added once, pages without claimed blocks left alone, and the claim order (claimed language, syntect, fallback, plain)
-- conflicts between plugins, escaping `</script` in inlined files, the `data:` URL for risky scripts, and base64
+- conflicts between plugins, escaping `</script` in inlined files, and the `data:` URL for risky scripts
 - git plugins: GitHub shorthand, plugin names, and manifest files that try to leave the repository
 - parsing the background watcher's `--attach` list
 - the terminal theme: color formats, terminal replies, Ghostty's config, the CSS, and the JSON sent to the watcher

@@ -89,29 +89,14 @@ impl Loaded {
 /// also has `<!--` and `<script`, the HTML parser can enter its "double-escaped" state,
 /// where even the real `</script>` no longer ends the tag. Rewriting those in the code
 /// could break it (`\!` is a syntax error in a `u`-flag regex), so that rare script goes
-/// in as a base64 `data:` URL instead, which contains no markup at all.
+/// in as a percent-encoded `data:` URL instead, which contains no markup at all.
 fn script_tag(js: &str) -> String {
     let lower = js.to_ascii_lowercase();
     if lower.contains("<!--") && lower.contains("<script") {
-        return format!("<script src=\"data:text/javascript;charset=utf-8;base64,{}\"></script>\n", base64(js.as_bytes()));
+        let url = crate::render::percent_encode(js.as_bytes());
+        return format!("<script src=\"data:text/javascript;charset=utf-8,{url}\"></script>\n");
     }
     format!("<script>\n{}\n</script>\n", neutralize(js, "</script"))
-}
-
-fn base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let n = chunk.iter().enumerate().fold(0u32, |n, (i, &b)| n | (b as u32) << (16 - 8 * i));
-        for i in 0..4 {
-            if i <= chunk.len() {
-                out.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
 }
 
 /// Break up `tag` (any case) so inlined code can't close the element it's in.
@@ -130,8 +115,20 @@ fn neutralize(code: &str, tag: &str) -> String {
 
 /// `<data folder>/tmdview/plugins`.
 fn root() -> Result<PathBuf> {
-    let data = dirs::data_dir().context("couldn't find your data folder")?;
-    Ok(data.join("tmdview").join("plugins"))
+    Ok(data_dir()?.join("tmdview").join("plugins"))
+}
+
+/// The OS's folder for app data: `~/Library/Application Support` on macOS,
+/// `$XDG_DATA_HOME` or `~/.local/share` elsewhere.
+fn data_dir() -> Result<PathBuf> {
+    let home = || std::env::var_os("HOME").map(PathBuf::from).context("couldn't find your data folder: HOME isn't set");
+    if cfg!(target_os = "macos") {
+        return Ok(home()?.join("Library/Application Support"));
+    }
+    match std::env::var_os("XDG_DATA_HOME").map(PathBuf::from) {
+        Some(dir) if dir.is_absolute() => Ok(dir),
+        _ => Ok(home()?.join(".local/share")),
+    }
 }
 
 /// Every installed plugin: built-ins first, then git plugins by name. When two
@@ -162,7 +159,7 @@ pub fn run(action: Action) -> Result<()> {
                             bail!("--ref only applies to git plugins, not {source}");
                         }
                         check_conflicts(&builtin.claims(), &load_installed()?)?;
-                        eprintln!("tmdview: downloading {} {}", builtin.name(), builtin.version());
+                        eprintln!("tmdview: downloading {} {}", builtin.name, builtin.version);
                         let path = builtin.install()?;
                         eprintln!("tmdview: installed {}", path.display());
                     }
@@ -201,7 +198,7 @@ pub fn run(action: Action) -> Result<()> {
 fn list() -> Result<()> {
     for builtin in Builtin::ALL {
         let status = if builtin.is_installed()? { "installed" } else { "not installed" };
-        println!("{:<12} {:<9} built-in  {status}", builtin.name(), builtin.version());
+        println!("{:<12} {:<9} built-in  {status}", builtin.name, builtin.version);
     }
     for name in git::installed()? {
         match git::describe(&name) {
@@ -253,18 +250,9 @@ mod tests {
     fn scripts_that_could_swallow_the_page_go_in_as_data_urls() {
         let risky = r#"const a = "<!--"; const b = "<script>";"#;
         let tag = script_tag(risky);
-        assert!(tag.starts_with(r#"<script src="data:text/javascript;charset=utf-8;base64,"#), "{tag}");
+        assert!(tag.starts_with(r#"<script src="data:text/javascript;charset=utf-8,const%20a"#), "{tag}");
         assert!(!tag.contains("<!--"), "{tag}");
         assert_eq!(script_tag("let x = 1;"), "<script>\nlet x = 1;\n</script>\n");
-    }
-
-    #[test]
-    fn base64_matches_the_standard_encoding() {
-        assert_eq!(base64(b""), "");
-        assert_eq!(base64(b"f"), "Zg==");
-        assert_eq!(base64(b"fo"), "Zm8=");
-        assert_eq!(base64(b"foo"), "Zm9v");
-        assert_eq!(base64("<!--é".as_bytes()), "PCEtLcOp");
     }
 
     #[test]
