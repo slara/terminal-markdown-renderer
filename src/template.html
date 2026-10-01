@@ -112,6 +112,16 @@ tr:nth-child(2n) td { background: var(--subtle-bg); }
 /* Code colors: syntect's, or the terminal theme's whole look. The pre keeps our own background/border. */
 {{theme_css}}
 pre.hl-code { background: var(--subtle-bg) !important; }
+
+pre > .copy {
+  position: absolute; top: 4px; right: 8px;
+  font: 11px var(--mono); color: var(--muted);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+  height: 24px; padding: 0 6px; display: flex; align-items: center;
+  cursor: pointer; opacity: 0;
+}
+pre:hover > .copy, pre > .copy:focus-visible { opacity: 1; }
+pre[data-lang]:hover::before { visibility: hidden; }
 </style>
 </head>
 <body>
@@ -123,6 +133,20 @@ pre.hl-code { background: var(--subtle-bg) !important; }
 window.tmdview = { pending: [], ready(promise) { this.pending.push(promise); } };
 </script>
 {{plugins}}<script>
+// A copy button on each code block. Plugin blocks are skipped: their plugin replaces them.
+document.querySelectorAll("pre:not(.tmdview-plugin)").forEach(pre => {
+  const btn = document.createElement("button");
+  const icon = '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/></svg>';
+  btn.className = "copy";
+  btn.ariaLabel = "Copy";
+  btn.innerHTML = icon;
+  btn.onclick = () => navigator.clipboard.writeText(pre.querySelector("code").innerText)
+    .then(() => btn.textContent = "Copied", () => btn.textContent = "Failed")
+    .then(() => setTimeout(() => btn.innerHTML = icon, 1500));
+  pre.append(btn);
+});
+</script>
+<script>
 // Keep the scroll position when tmdview reloads the page after an edit.
 (() => {
   const key = "tmdview-scroll:" + location.pathname;

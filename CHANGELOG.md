@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- A copy button on each code block. It shows on hover and says "Copied" once the code is on the clipboard.
+
 ## 0.5.0 — 2026-10-01
 
 ### Changed
