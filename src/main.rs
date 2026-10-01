@@ -2,6 +2,7 @@ mod browser;
 mod config;
 mod plugins;
 mod render;
+mod serve;
 mod terminal;
 mod watch;
 
@@ -62,6 +63,10 @@ struct Cli {
     /// background watcher, which has no terminal to ask.
     #[arg(long, hide = true, requires = "attach")]
     terminal_style: Option<String>,
+
+    /// Internal: the URL the background watcher serves, which opens linked Markdown files.
+    #[arg(long, hide = true, requires = "attach")]
+    serve: Option<String>,
 
     /// Write the HTML here instead of a temp file.
     #[arg(short, long)]
@@ -133,13 +138,26 @@ impl Page {
     }
 
     fn write(&self, markdown: &str) -> Result<()> {
-        let title = self.source.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-        let base_dir = self.source.parent().unwrap_or(Path::new("/"));
+        self.write_to(&self.source, markdown, &self.output)
+    }
+
+    /// Write the page of a Markdown file this one links to, the same way, and return
+    /// where it went.
+    fn write_linked(&self, source: &Path) -> Result<PathBuf> {
+        let markdown = fs::read_to_string(source).with_context(|| format!("reading {}", source.display()))?;
+        let output = if source == self.source { self.output.clone() } else { default_output(source)? };
+        self.write_to(source, &markdown, &output)?;
+        Ok(output)
+    }
+
+    fn write_to(&self, source: &Path, markdown: &str, output: &Path) -> Result<()> {
+        let title = source.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let base_dir = source.parent().unwrap_or(Path::new("/"));
         let html = self.renderer.render(markdown, &title, base_dir, self.scheme);
         // Write then rename, so a reload never sees a half-written page.
-        let tmp = self.output.with_extension(format!("{}.tmp", std::process::id()));
+        let tmp = output.with_extension(format!("{}.tmp", std::process::id()));
         fs::write(&tmp, html).with_context(|| format!("writing {}", tmp.display()))?;
-        fs::rename(&tmp, &self.output).with_context(|| format!("writing {}", self.output.display()))
+        fs::rename(&tmp, output).with_context(|| format!("writing {}", output.display()))
     }
 }
 
@@ -175,6 +193,13 @@ fn main() -> Result<()> {
         }
         _ => None,
     };
+    // The watcher serves the endpoint that opens linked Markdown files, so only pages it
+    // watches get one; it was handed the URL by the tmdview that started it.
+    let server = match &cli.serve {
+        Some(url) => Some(url.clone()),
+        None if watch && !cli.no_open && cli.attach.is_none() => Some(serve::new_url()?),
+        None => None,
+    };
     let page = Page {
         source,
         output,
@@ -183,14 +208,21 @@ fn main() -> Result<()> {
             plugins,
             terminal.as_ref().map_or_else(String::new, terminal::Style::css),
             config.plugins_json(),
+            server.clone(),
         ),
     };
 
     if let Some(before) = &cli.attach {
         // The tmdview that started us already wrote the page.
         let log = Log::new(watch::log_path(&page.output));
+        // Leaked, so the endpoint's thread can share it until the process exits.
+        let page: &'static Page = Box::leak(Box::new(page));
+        if let Some(url) = server {
+            let log = log.clone();
+            std::thread::spawn(move || serve::run(&url, page, &log));
+        }
         match browser::find_new_tab(&fs::canonicalize(&page.output)?, before) {
-            Some(tab) => watch::run(&page, &tab, poll, &log),
+            Some(tab) => watch::run(page, &tab, poll, &log),
             None => log.say("couldn't find the browser tab; not reloading on save"),
         }
         return Ok(());
@@ -206,7 +238,7 @@ fn main() -> Result<()> {
     if watch {
         // Started before the browser opens: it finds the new tab itself, which can take
         // seconds while a browser starts, so nothing here waits for it.
-        spawn_watcher(&browser::snapshot(), terminal.as_ref())?;
+        spawn_watcher(&browser::snapshot(), terminal.as_ref(), server.as_deref())?;
     }
     match split {
         Some(direction) => {
@@ -226,11 +258,14 @@ fn main() -> Result<()> {
 /// Start a detached copy of tmdview, with the same arguments plus `--attach`, that
 /// reloads the new tab on every save and exits when the tab closes. It runs in its own
 /// process group, so Ctrl-C in the shell doesn't stop it.
-fn spawn_watcher(before: &[browser::Tab], terminal: Option<&terminal::Style>) -> Result<()> {
+fn spawn_watcher(before: &[browser::Tab], terminal: Option<&terminal::Style>, server: Option<&str>) -> Result<()> {
     let mut cmd = Process::new(std::env::current_exe().context("finding the tmdview binary")?);
     cmd.args(std::env::args_os().skip(1));
     if let Some(style) = terminal {
         cmd.arg("--terminal-style").arg(serde_json::to_string(style)?);
+    }
+    if let Some(url) = server {
+        cmd.arg("--serve").arg(url);
     }
     cmd.arg("--attach");
     if !before.is_empty() {
@@ -245,6 +280,7 @@ fn spawn_watcher(before: &[browser::Tab], terminal: Option<&terminal::Style>) ->
 
 /// The background watcher's messages. It has no terminal, so they go to a file,
 /// started fresh each run.
+#[derive(Clone)]
 struct Log {
     path: PathBuf,
 }

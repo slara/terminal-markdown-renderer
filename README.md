@@ -60,8 +60,9 @@ watch = true
 poll = false
 
 # Each plugin's settings.
+# Code colors: github, catppuccin, atom-one or tokyo-night.
 [plugins.highlight]
-theme = "catppuccin"   # code colors: github, catppuccin, atom-one or tokyo-night
+theme = "catppuccin"
 
 [plugins.mermaid]      # passed to mermaid.initialize
 theme = "forest"
@@ -75,6 +76,7 @@ A typo or a value that isn't valid stops tmdview with a message that names the f
 - Code blocks, with syntax colors from the [`highlight`](https://github.com/slara/tmdview-highlight) plugin, in light and dark themes
 - Links to headings (`#usage`), including headings you give a custom `{#id}`
 - Relative links and images, resolved from the Markdown file's folder
+- Links to other Markdown files open them rendered, so you can follow a README into `docs/` and back. Each one is rendered when you click it
 - Front matter (`---` YAML or `+++` TOML at the top) is left out of the page
 
 Math is recognized but shown as plain text, not typeset.

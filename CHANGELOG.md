@@ -6,6 +6,7 @@
 
 - A config file, `~/.config/tmdview/config.toml`, for flag defaults (`theme`, `split`, `size`, `watch`, `poll`) and plugin settings (`[plugins.<name>]`, which a plugin reads as `tmdview.config.<name>`). Mermaid passes its settings to `mermaid.initialize`.
 
+- Links to local Markdown files open those files rendered, instead of as raw text. The background watcher renders a file when you click a link to it, through an endpoint on localhost; with `--no-watch`, links open the raw file.
 - A copy button on each code block. It shows on hover and says "Copied" once the code is on the clipboard.
 
 ### Changed

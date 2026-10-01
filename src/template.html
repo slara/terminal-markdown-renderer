@@ -134,6 +134,17 @@ pre[data-lang]:hover::before { visibility: hidden; }
 window.tmdview = { pending: [], ready(promise) { this.pending.push(promise); } };
 </script>
 {{plugins}}<script>
+// Links to local Markdown files: the background watcher renders the file and answers
+// with its page's URL. Browsers block a redirect from http to file://, so the page goes
+// there itself. Without a watcher (--no-watch), the link opens the raw file.
+if (tmdview.server) addEventListener("click", e => {
+  const a = e.target.closest("a[href]");
+  if (!a || a.protocol !== "file:" || !/\.(md|markdown)$/i.test(a.pathname) || e.metaKey || e.ctrlKey) return;
+  e.preventDefault();
+  fetch(tmdview.server + "/render?path=" + encodeURIComponent(decodeURIComponent(a.pathname)))
+    .then(r => r.ok ? r.text() : Promise.reject(r.status))
+    .then(url => location.href = url + a.hash, () => location.href = a.href);
+});
 // A copy button on each code block. This runs after the plugins, so blocks a plugin drew
 // over (a diagram, a card) have lost their <code> and get none; ones it only colored keep it.
 document.querySelectorAll("pre:has(> code)").forEach(pre => {

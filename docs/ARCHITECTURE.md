@@ -33,6 +33,7 @@ flowchart LR
 |---|---|
 | `src/main.rs` | Command-line flags, where the output goes, starting the background watcher, where messages go |
 | `src/config.rs` | `~/.config/tmdview/config.toml`: flag defaults, plugin settings |
+| `src/serve.rs` | The watcher's localhost endpoint that renders a linked Markdown file when you click it |
 | `src/watch.rs` | File change events with a polling fallback, and the loop that rebuilds and reloads |
 | `src/render.rs` | Markdown to a full HTML page, which plugin takes each code block, heading IDs, file URLs |
 | `src/template.html` | Page layout, CSS for both themes, the script that keeps your scroll position |
@@ -179,6 +180,20 @@ The page lives in a temp folder, not next to your Markdown.
 To keep `![](img/diagram.png)` working, the page sets `<base href>` to the Markdown file's folder.
 That path is percent-encoded, so folders with spaces, `#` or `?` in their names still work.
 
+### Links to other Markdown files
+
+A link like `[guide](docs/guide.md#setup)` would open the file's raw text, and a page can have many such links, so tmdview renders each one only when it's clicked:
+
+1. The background watcher listens on `127.0.0.1` at a free port, in `serve.rs`. The URL carries a random token, and reaches the page as `tmdview.server`.
+2. A click on a link to a local `.md` or `.markdown` file calls `<server>/render?path=<file>`.
+3. The watcher renders that file the same way, to its own temp page, and answers with the page's `file://` URL.
+4. The page goes there, keeping the link's `#fragment`. That page has the same `tmdview.server`, so its links work too.
+
+The page navigates itself because browsers block a redirect from `http://` to `file://`.
+The endpoint only renders Markdown files that exist, and only with the token, so another web page can't use it.
+Only the file you opened is watched; a linked page shows its file as it was when you clicked.
+With `--no-watch` there's no watcher, so a link opens the raw file.
+
 ## The output file
 
 By default the HTML goes to `<temp>/tmdview/<name>-<hash>.html`.
@@ -322,13 +337,13 @@ It restores on the `load` event, after images have loaded, so the page is tall e
 
 ## Tests
 
-`cargo test` runs 34 tests. They cover:
+`cargo test` runs 35 tests. They cover:
 
 - heading IDs, including duplicates and custom `{#id}`s
 - plain, escaped output for code no plugin takes
 - tables, task lists and strikethrough, front matter, and table cells kept on one line
 - heading attributes with quoted values, front matter in the page and its keys, and the plugins it adds, `data-info` on plugin blocks
-- percent-encoding and decoding of file paths
+- percent-encoding and decoding of file paths, and which files the link endpoint renders
 - plugins: claimed blocks, files added once, pages without claimed blocks left alone, and the claim order (claimed language, fallback, plain)
 - conflicts between plugins, escaping `</script` in inlined files, and the `data:` URL for risky scripts
 - git plugins: GitHub shorthand, plugin names, and manifest files that try to leave the repository
