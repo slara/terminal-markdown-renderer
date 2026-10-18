@@ -1,6 +1,6 @@
 # tmdview
 
-View a Markdown file as a beautiful rendered HTML page, in a browser that runs inside your terminal.
+View a Markdown file as a rendered HTML page, in a browser that runs inside your terminal.
 
 ![tmdview showing this README in a pane beside the editor](docs/screenshot.png)
 
@@ -11,9 +11,14 @@ View a Markdown file as a beautiful rendered HTML page, in a browser that runs i
 > I built it for my own use, so expect no support, no roadmap and no stability promises.
 > Read the code before you depend on it.
 
-## Quick start
+## Requirements
 
-You need [Rust](https://rustup.rs) and [terminal-browser](https://github.com/zenbu-labs/terminal-browser).
+- [Rust](https://rustup.rs) 1.85 or newer, to build tmdview (it uses the 2024 edition)
+- [terminal-browser](https://github.com/zenbu-labs/terminal-browser), which shows the page in a terminal pane
+- `git`, only to install plugins from a git repository
+- [herdr](https://herdr.dev) 0.9.0 or newer, only for the [herdr plugin](#in-herdr)
+
+## Quick start
 
 1. Install: `cargo install --git https://github.com/slara/terminal-markdown-renderer`
 2. Open a file beside your shell: `tmdview README.md --split right`
@@ -93,7 +98,7 @@ herdr plugin install slara/terminal-markdown-renderer
 - Ctrl-click a `file://` link to a `.md` file to open it rendered beside the pane. It's Ctrl on macOS too, not Cmd.
   Links come from `ls --hyperlink`, `eza --hyperlink`, `fd --hyperlink` or `rg --hyperlink-format`. A path printed as plain text isn't a link.
   herdr only passes clicks to plugins while `ui.mouse_capture` is on.
-- Or bind the `slara.tmdview.open` action to a key: it opens the selected path, or `README.md` in the focused pane's folder. A relative path is read from the focused pane's folder.
+- Or bind the `slara.tmdview.open` action to a key: it opens the selected path, or `README.md` if nothing is selected. Relative paths start from the focused pane's folder.
 
 To try the click, print a link and Ctrl-click it:
 
