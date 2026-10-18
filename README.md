@@ -81,6 +81,38 @@ A typo or a value that isn't valid stops tmdview with a message that names the f
 
 Math is recognized but shown as plain text, not typeset.
 
+## In herdr
+
+tmdview is also a [herdr](https://herdr.dev) plugin. It needs herdr 0.9.0 or newer, plus `cargo` and terminal-browser on your machine.
+herdr builds its own copy of tmdview when it installs the plugin, so you don't need `cargo install` as well.
+
+```sh
+herdr plugin install slara/terminal-markdown-renderer
+```
+
+- Ctrl-click a `file://` link to a `.md` file to open it rendered beside the pane. It's Ctrl on macOS too, not Cmd.
+  Links come from `ls --hyperlink`, `eza --hyperlink`, `fd --hyperlink` or `rg --hyperlink-format`. A path printed as plain text isn't a link.
+  herdr only passes clicks to plugins while `ui.mouse_capture` is on.
+- Or bind the `slara.tmdview.open` action to a key: it opens the selected path, or `README.md` in the focused pane's folder. A relative path is read from the focused pane's folder.
+
+To try the click, print a link and Ctrl-click it:
+
+```sh
+printf '\e]8;;file://%s\e\\%s\e]8;;\e\\\n' "$PWD/README.md" README.md
+```
+
+```toml
+[[keys.command]]
+key = "prefix+m"
+type = "plugin_action"
+command = "slara.tmdview.open"
+description = "open Markdown in tmdview"
+```
+
+If nothing opens, `herdr plugin log list --plugin slara.tmdview` shows each run and the path it got.
+
+This herdr plugin is separate from tmdview's own [plugins](#plugins), which add JavaScript to the page.
+
 ## Matching your terminal
 
 `--theme terminal` makes the page look like part of the terminal: its background and text color, with GitHub's link colors on top (GitHub Dark on a dark background, GitHub Light on a light one). Code takes the `highlight` plugin's theme, in its dark or light version to match.
@@ -137,6 +169,7 @@ A background copy of tmdview does the watching, and it exits when you close the 
 cargo test      # unit tests, no browser needed
 cargo clippy --all-targets
 cargo run -- README.md --split right
+cargo build --release && herdr plugin link .   # try the herdr plugin from this checkout
 ```
 
 The browser code is only tested by hand, because it needs a running terminal-browser.

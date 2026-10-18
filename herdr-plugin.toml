@@ -1,0 +1,22 @@
+id = "slara.tmdview"
+name = "tmdview"
+version = "0.5.0"
+# 0.9.0 is the first that passes file:// link clicks to link handlers.
+min_herdr_version = "0.9.0"
+description = "Open Markdown files rendered, in a browser pane beside the current one"
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["cargo", "build", "--release", "--locked"]
+
+[[actions]]
+id = "open"
+title = "Open in tmdview"
+contexts = ["workspace"]
+command = ["bash", "herdr/open.sh"]
+
+[[link_handlers]]
+id = "markdown-file"
+title = "Open Markdown rendered"
+pattern = "(?i)^file://.*\\.(md|markdown)(#.*)?$"
+action = "open"
